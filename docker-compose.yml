@@ -1,0 +1,109 @@
+version: '3.8'
+
+services:
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: ip_nginx
+    restart: always
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - frontend
+      - backend
+    networks:
+      - appnet
+
+  frontend:
+    build: ./frontend
+    container_name: ip_frontend
+    restart: always
+    networks:
+      - appnet
+
+  backend:
+    build: ./backend
+    restart: always
+    environment:
+      DATABASE_URL: postgresql://postgres:thebestpassword@postgres:5432/pasoublie
+      REDIS_URL: redis://redis:6379/0
+      STORAGE_SERVICE_URL: storage_service:50051
+      SEARCH_SERVICE_URL: search_service:50052
+    deploy:
+      replicas: 2
+    depends_on:
+      - postgres
+      - redis
+    networks:
+      - appnet
+
+  index-worker:
+    build: 
+      context: ./backend
+      dockerfile: Dockerfile.worker
+    container_name: ip_worker
+    restart: always
+    depends_on:
+      postgres:
+        condition: service_healty
+      redis:
+        condition: service_healty
+    networks:
+      - appnet
+
+  search_service:
+    build: ./search_service
+    container_name: ip_search
+    restart: always
+    depends_on:
+      - postgres
+    networks:
+      - appnet
+
+  storage_service:
+    build: ./storage_service
+    container_name: ip_storage
+    restart: always
+    volumes:
+      - file_data:/data
+    networks:
+      - appnet
+
+  postgres:
+    image: ankane/pgvector:v0.5.1
+    container_name: ip_postgres
+    restart: always
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d pasoublie"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: thebestpassword
+      POSTGRES_DB: pasoublie
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    networks:
+      - appnet
+
+  redis:
+    image: redis:7-alpine
+    container_name: ip_redis
+    restart: always
+    networks:
+      - appnet
+
+networks:
+  appnet:
+    driver: bridge
+
+volumes:
+  pgdata:
+  file_data:
+
+
+
+      
