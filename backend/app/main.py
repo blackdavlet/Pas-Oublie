@@ -37,6 +37,18 @@ class LoginSchema(BaseModel):
     email: str
     password: str
 
+class WorkspaceSchema(BaseModel):
+    workspace_name: str
+
+class MemberSchema(BaseModel):
+    user_id: int
+    role: str
+
+class FolderSchema(BaseModel):
+    folder_name: str
+    workspace_id: int
+
+
 @app.post("/auth/register")
 async def register(data: RegisterSchema):
     user = await db.create_user(data.username, data.email, data.password)
@@ -48,7 +60,7 @@ async def register(data: RegisterSchema):
 @app.post("/auth/login")
 async def login(data: LoginSchema):
     user = await db.get_user_by_email(data.email)
-    if user is None or not db.verifypassword(data.password, user["password_hash"]):
+    if user is None or not db.verify_password(data.password, user["password_hash"]):
         raise HTTPException(401, "Invalid email or password")
     token = create_token(user["user_id"], user["username"])
     return {"token": token, "user_id": user["user_id"]}
@@ -82,11 +94,11 @@ async def upload(
         "parts": "[]"
     })
 
-    await _r.expire(f"upload: {upload_id}", 3600)
+    await _r.expire(f"upload:{upload_id}", 3600)
 
     return {"upload_id": upload_id, "object_name": object_name}
 
-@app.put("files/upload/{upload_id}/chunk/{part_number}")
+@app.put("/files/upload/{upload_id}/chunk/{part_number}")
 async def upload_chunk(
     upload_id: str,
     part_number: int,
@@ -105,11 +117,11 @@ async def upload_chunk(
 
     parts = json.loads(meta["parts"])
     parts.append({"part": part_number, "etag": etag})
-    await _r.hset(f"{upload_id}", "parts", json.dumps(parts))
+    await _r.hset(f"upload:{upload_id}", "parts", json.dumps(parts))
 
     return {"part": part_number, "etag": etag}
 
-app.post("/files/upload/{upload_id}/complete")
+@app.post("/files/upload/{upload_id}/complete")
 async def upload_complete(upload_id: str):
     meta = await _r.hgetall(f"upload:{upload_id}")
     if not meta:
@@ -126,9 +138,16 @@ async def upload_complete(upload_id: str):
         filename=meta["filename"],
         folder_id=int(meta["folder_id"]),
         workspace_id=int(meta["workspace_id"]),
-        mime_type="application/octet-stream"
+        mime_type="application/octet-stream",
+        storage_path=storage_path
     )
 
+    await _r.publish("index:queue", json.dumps({
+        "file_id": str(file_row["file_id"]),
+        "storage_path": storage_path,
+        "filename": meta["filename"]
+    }))
+    
     await _r.delete(f"upload:{upload_id}")
 
     await ws.broadcast_event(int(meta["workspace_id"]), {
@@ -143,22 +162,86 @@ async def upload_complete(upload_id: str):
         "storage_path": storage_path
     }
 
-
-
-
-
-
-
-
-
-
-
 @app.get("/files/{file_id}")
-async def get_file():
+async def get_file(
+    file_id: str,
+    current_user=Depends(get_current_user)
+):
+    file = await db.get_file_by_id(file_id)
+    if file is None:
+        raise HTTPException(404, "File not found")
+    return {
+        "file_id": str(file["file_id"]),
+        "filename": file["filename"],
+        "uploaded_at": file["uploaded_at"].isoformat(),
+        "mime_type": file["mime_type"]
+    }
 
 @app.get("/search")
-async def search():
+async def search(
+    query: str,
+    workspace_id: int,
+    current_user=Depends(get_current_user)
+):
+    if not query.strip():
+        raise HTTPException(400, "Query cannot be empty")
+    results = grpc_client.search(query, workspace_id)
+    return {"results": results}
+
+@app.post("/workspaces")
+async def create_workspace(
+    data: WorkspaceSchema,
+    current_user=Depends(get_current_user)
+):
+    workspace = await db.create_workspace(
+        data.workspace_name,
+        current_user["user_id"]
+    )
+    return{
+        "workspace_id": workspace["workspace_id"],
+        "workspace_name": workspace["workspace_name"]
+    }
+
+@app.get("/workspaces")
+async def get_workspaces(current_user=Depends(get_current_user)):
+    workspaces = await db.get_user_workspaces(current_user["user_id"])
+    return{"workspaces": [dict(w) for w in workspaces]}
+
+@app.post("/workspaces/{workspace_id}/members")
+async def add_member(
+    workspace_id: int,
+    data: MemberSchema,
+    current_user=Depends(get_current_user)
+):
+    success = await db.add_workspace_member(
+        data.user_id, workspace_id, data.role
+    )
+    if not success:
+        raise HTTPException(400, "User is already a member")
+    return {"message": "Member added"}
+
+@app.get("/workspaces/{workspace_id}/files")
+async def get_workspace_files(
+    workspace_id: int,
+    folder_id: int,
+    current_user=Depends(get_current_user)
+):
+    files = await db.get_files_by_folder(folder_id)
+    return {"files": [dict(f) for f in files]}
 
 
-
+@app.post("/folders")
+async def create_folder(
+    data: FolderSchema,
+    current_user=Depends(get_current_user)
+):
+    folder = await db.create_folder(
+        current_user["user_id"],
+        data.folder_name,
+        data.workspace_id
+    )
+    return{
+        "folder_id": folder["folder_id"],
+        "folder_name": folder["folder_name"]
+    }
 
