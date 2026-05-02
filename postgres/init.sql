@@ -37,20 +37,22 @@ CREATE TABLE IF NOT EXISTS folder (
 );
 
 CREATE TABLE IF NOT EXISTS file (
-    file_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    file_id BIGINT PRIMARY KEY,
     user_id INTEGER NOT NULL,
-    filename VARCHAR(255) NOT NULL,
+    workspace_id INTEGER,
     folder_id INTEGER NOT NULL,
+    filename VARCHAR(255) NOT NULL,
     mime_type VARCHAR(127),
     uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     storage_path VARCHAR(512) NOT NULL,
     FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE,
-    FOREIGN KEY (folder_id) REFERENCES folder(folder_id) ON DELETE CASCADE
+    FOREIGN KEY (folder_id) REFERENCES folder(folder_id) ON DELETE CASCADE,
+    FOREIGN KEY (workspace_id) REFERENCES workspace(workspace_id) ON DELETE CASCADE
 );
 
 CREATE TABLE IF NOT EXISTS file_embeddings (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    file_id UUID NOT NULL,
+    file_id BIGINT NOT NULL,
     embedding vector(1536),  --vector data
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (file_id) REFERENCES file(file_id) ON DELETE CASCADE

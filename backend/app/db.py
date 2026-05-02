@@ -2,6 +2,7 @@
 import os
 import asyncpg
 from passlib.hash import bcrypt
+from app.snowflake import generate_id
 
 
 _pool = None
@@ -37,11 +38,11 @@ async def create_workspace(workspace_name: str, owner_id: int):
     async with pool.acquire() as con:                                          #------------NEW-WORKSPACE
         async with con.transaction():
             workspace = await con.fetchrow(
-                """INSERT INTO workspace (workspace_name)                  
-                   VALUES ($1)
+                """INSERT INTO workspace (workspace_name, owner_id)                  
+                   VALUES ($1, $2)
                    RETURNING workspace_id, workspace_name, created_at
                    """,
-                   workspace_name
+                   workspace_name, owner_id
             )
 
             await con.execute(
@@ -56,13 +57,15 @@ async def create_workspace(workspace_name: str, owner_id: int):
 
 async def create_file(user_id: int, filename: str, folder_id: int, workspace_id: int, mime_type: str, storage_path: str):
     pool = await get_pool()
+    file_id = generate_id()
     async with pool.acquire() as con:
         return await con.fetchrow(
-            """INSERT INTO file (user_id, filename, folder_id, workspace_id, mime, storage_path)      
-                VALUES ($1, $2, $3, $4, $5, $6)
-                RETURNING file_id, filename, uploaded_at
-                """,
-                user_id, filename, folder_id, workspace_id, mime_type, storage_path                   #------------NEW-FILE
+            """
+            INSERT INTO file (file_id, user_id, filename, folder_id, workspace_id, mime_type, storage_path)      
+            VALUES ($1, $2, $3, $4, $5, $6, $7)
+            RETURNING file_id, filename, uploaded_at
+            """,
+                file_id, user_id, filename, folder_id, workspace_id, mime_type, storage_path                   #------------NEW-FILE
         )
     
 
@@ -161,7 +164,7 @@ async def get_files_by_folder(folder_id: int):
 
 async def delete_file(file_id: str):
     pool = await get_pool()
-    async with pool.execute() as con:
+    async with pool.acquire() as con:
         return await con.fetchrow(
             "DELETE FROM file WHERE file_id = $1",
             file_id
