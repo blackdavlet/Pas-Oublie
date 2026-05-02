@@ -5,6 +5,8 @@ from pathlib import Path
 
 from fastapi import FastAPI, UploadFile, File, HTTPException, Depends, Request
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel
+
 
 from app import db
 from app import ws
@@ -12,6 +14,7 @@ from app import minio_client
 from app import grpc_client
 from app import auth                    
 from app.snowflake import generate_id
+from app.auth import create_token, get_current_user
 
 import redis.asyncio as aioredis
 
@@ -24,16 +27,44 @@ app.include_router(ws.router)
 
 _r = aioredis.from_url(os.environ["REDIS_URL"], decode_responses=True)
 
+
+class RegisterSchema(BaseModel):
+    username: str
+    email: str
+    password: str
+
+class LoginSchema(BaseModel):
+    email: str
+    password: str
+
 @app.post("/auth/register")
-async def register():
+async def register(data: RegisterSchema):
+    user = await db.create_user(data.username, data.email, data.password)
+    if user is None:
+        raise HTTPException(400, "User with similar username already exists")
+    token = create_token(user["user_id"], user["username"])
+    return {"token": token, "user_id": user["user_id"]}
 
 @app.post("/auth/login")
-async def login():
+async def login(data: LoginSchema):
+    user = await db.get_user_by_email(data.email)
+    if user is None or not db.verifypassword(data.password, user["password_hash"]):
+        raise HTTPException(401, "Invalid email or password")
+    token = create_token(user["user_id"], user["username"])
+    return {"token": token, "user_id": user["user_id"]}
+
+@app.get("/auth/me")
+async def me(current_user=Depends(get_current_user)):
+    return {
+        "user_id": current_user["user_id"],
+        "username": current_user["username"],
+        "email": current_user["email"]
+    }
 
 @app.post("/files/upload/init")
 async def upload(
     filename: str,
-    workspace_it: int,
+    workspace_id: int,
     folder_id: int,
     current_user = Depends(get_current_user)
 ):
@@ -45,7 +76,7 @@ async def upload(
     await _r.hset(f"upload:{upload_id}", mapping={
         "filename": filename,
         "object_name": object_name,
-        "workspace_id": workspace_id
+        "workspace_id": workspace_id,
         "folder_id": folder_id,
         "user_id": current_user["user_id"],
         "parts": "[]"
@@ -68,7 +99,7 @@ async def upload_chunk(
 
     data = await chunk.read()
 
-    etag = minio_clien.upload_part(
+    etag = minio_client.upload_part(
         meta["object_name"], upload_id, part_number, data
     )
 
@@ -80,7 +111,7 @@ async def upload_chunk(
 
 app.post("/files/upload/{upload_id}/complete")
 async def upload_complete(upload_id: str):
-    meta = await -r.hgetall(f"upload:{upload_id}")
+    meta = await _r.hgetall(f"upload:{upload_id}")
     if not meta:
         raise HTTPException(404, "session not found or expired")
 
