@@ -1,10 +1,28 @@
-import os, uuid
+import os
+import uuid
+import json
 from pathlib import Path
-from fastapi import FastAPI
-from app import minio_client, db
 
-app = FastAPI(title="Pas Oublie API", version="0.0.1")
-app.include_rouer(ws_router)
+from fastapi import FastAPI, UploadFile, File, HTTPException, Depends, Request
+from fastapi.responses import JSONResponse
+
+from app import db
+from app import ws
+from app import minio_client
+from app import grpc_client
+from app import auth                    
+from app.snowflake import generate_id
+
+import redis.asyncio as aioredis
+
+app = FastAPI(
+    title="Pas Oublie API",
+    version="1.0.0"
+)
+
+app.include_router(ws.router)
+
+_r = aioredis.from_url(os.environ["REDIS_URL"], decode_responses=True)
 
 @app.post("/auth/register")
 async def register():
