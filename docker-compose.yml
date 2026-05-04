@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   nginx:
     image: nginx:1.27-alpine
@@ -46,9 +44,9 @@ services:
     restart: always
     depends_on:
       postgres:
-        condition: service_healty
+        condition: service_healthy
       redis:
-        condition: service_healty
+        condition: service_healthy
     networks:
       - appnet
 

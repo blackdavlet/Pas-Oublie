@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 
 from fastapi import FastAPI, UploadFile, File, HTTPException, Depends, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel
 
 
@@ -177,6 +177,45 @@ async def get_file(
         "mime_type": file["mime_type"]
     }
 
+@app.get("/files/{file_id}/download")
+async def download_file(
+    file_id: str,
+    current_user=Depends(get_current_user)
+):
+    file = await db.get_file_by_id(file_id)
+    if file is None:
+        raise HTTPException(404, "File not found")
+    
+    result = grpc_client.download_file(file["storage_path"])
+
+    return Response(
+        content=result.file_data,
+        media_type=result.mime_type,
+        headers={
+            "Content-Disposition": f"attachment; filename={result.filename}"
+        }
+    )
+
+@app.delete("/files/{file_id}/delete")
+async def delete_file(
+    file_id: str,
+    current_user=Depends(get_current_user)
+):
+    file = await db.get_file_by_id(file_id)
+    if file is None:
+        raise HTTPException(404, "File not found")
+    
+    grpc_client.delete_file(file["storage_path"])
+    await db.delete_file(file_id)
+
+    await ws.broadcast_event(file["workspace_id"], {
+        "event": "file_deleted",
+        "file_id": file_id,
+        "filename": file["filename"]
+    })
+    
+    return {"message": "File deleted"}
+
 @app.get("/search")
 async def search(
     query: str,
@@ -244,4 +283,3 @@ async def create_folder(
         "folder_id": folder["folder_id"],
         "folder_name": folder["folder_name"]
     }
-
