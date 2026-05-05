@@ -1,28 +1,8 @@
-services:
-  nginx:
-    image: nginx:1.27-alpine
-    container_name: ip_nginx
-    restart: always
-    ports:
-      - "80:80"
-    volumes:
-      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
-      - images_data:/var/www/images:ro
-    depends_on:
-      - frontend
-      - backend
-    networks:
-      - appnet
-  frontend:
-    build: ./frontend
-    container_name: ip_frontend
-    restart: always
-    networks:
-      - appnet
-  backend:
-    build: ./backend
-    container_name: ip_backend
-    restart: always
-    environment:
-      DATABASE_URL: postgresql://postgres:password@postgres:5432/pastebin
-      REDIS_URL: redis://redis:6379/0
+FROM python:3.11-slim
+COPY --from=ghcr.io/astral-sh/uv:0.5.11 /uv /uvx /bin/
+WORKDIR /app
+COPY requirements.txt .
+RUN uv pip install --system --no-cache -r requirements.txt
+COPY search.proto search_pb2.py search_pb2_grpc.py server.py ./
+EXPOSE 50052
+CMD ["python", "server.py"]
