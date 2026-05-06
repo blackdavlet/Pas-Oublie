@@ -2,7 +2,7 @@ import os, json, asyncio
 import asyncpg
 import redis.asyncio as redis
 from minio import Minio
-from openai import OpenAI # not sure yet :(
+from openai import OpenAI
 
 REDIS_URL = os.environ["REDIS_URL"]
 DATABASE_URL = os.environ["DATABASE_URL"]
@@ -39,7 +39,7 @@ def extract_text(file_bytes: bytes, filename: str) -> str:
 
 
 def generate_embedding(text: str) -> list[float]:
-    """Call llm embeddings API — returns vector of 1536 or 336 floats."""
+    """returns vector of 1536"""
     if not text.strip():
         return [0.0] * 1536
     
@@ -52,7 +52,6 @@ def generate_embedding(text: str) -> list[float]:
 
 async def process_file(pool, file_id: str,
                        storage_path: str, filename: str):
-    """Full pipeline: fetch → extract → embed → store."""
     try:
         bucket, object_name = storage_path.split("/", 1)
         response = _minio.get_object(bucket, object_name)

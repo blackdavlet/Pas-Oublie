@@ -3,7 +3,7 @@ from concurrent import futures
 import grpc
 import asyncpg
 import asyncio
-from openai import OpenAI #NOT RLY SURE NOW
+from openai import OpenAI
 
 import search_pb2
 import search_pb2_grpc

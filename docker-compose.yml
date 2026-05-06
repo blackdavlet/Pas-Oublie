@@ -1,7 +1,9 @@
+version: '3.8'
+
 services:
   nginx:
     image: nginx:1.27-alpine
-    container_name: ip_nginx
+    container_name: pa_nginx
     restart: always
     ports:
       - "80:80"
@@ -15,96 +17,143 @@ services:
 
   frontend:
     build: ./frontend
-    container_name: ip_frontend
+    container_name: pa_frontend
     restart: always
     networks:
       - appnet
 
   backend:
     build: ./backend
+    container_name: pa_backend
     restart: always
     environment:
-      DATABASE_URL: postgresql://postgres:thebestpassword@postgres:5432/pasoublie
+      DATABASE_URL: postgresql://${DB_USER}:${DB_PASSWORD}@postgres:5432/${DB_NAME}
       REDIS_URL: redis://redis:6379/0
       STORAGE_SERVICE_URL: storage_service:50051
       SEARCH_SERVICE_URL: search_service:50052
-    deploy:
-      replicas: 2
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY}
+      JWT_SECRET: ${JWT_SECRET}
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      MACHINE_ID: 1
     depends_on:
       - postgres
       - redis
+      - minio
+      - storage_service
+      - search_service
     networks:
       - appnet
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/docs"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
 
-  index-worker:
-    build: 
-      context: ./backend
-      dockerfile: Dockerfile.worker
-    container_name: ip_worker
+  storage_service:
+    build: ./storage_service
+    container_name: pa_storage
     restart: always
+    environment:
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY}
     depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
+      - minio
     networks:
       - appnet
+    healthcheck:
+      test: ["CMD", "grpcurl", "-plaintext", "localhost:50051", "list"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
 
   search_service:
     build: ./search_service
-    container_name: ip_search
+    container_name: pa_search
     restart: always
+    environment:
+      DATABASE_URL: postgresql://${DB_USER}:${DB_PASSWORD}@postgres:5432/${DB_NAME}
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
     depends_on:
       - postgres
     networks:
       - appnet
+    healthcheck:
+      test: ["CMD", "grpcurl", "-plaintext", "localhost:50052", "list"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
 
-  storage_service:
-    build: ./storage_service
-    container_name: ip_storage
+  index_worker:
+    build: ./index_worker
+    container_name: pa_worker
     restart: always
-    volumes:
-      - file_data:/data
+    environment:
+      DATABASE_URL: postgresql://${DB_USER}:${DB_PASSWORD}@postgres:5432/${DB_NAME}
+      REDIS_URL: redis://redis:6379/0
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY}
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+    depends_on:
+      - postgres
+      - redis
+      - minio
     networks:
       - appnet
 
   postgres:
     image: ankane/pgvector:v0.5.1
-    container_name: ip_postgres
+    container_name: pa_postgres
     restart: always
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d pasoublie"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
     environment:
-      
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: ${DB_NAME}
     volumes:
       - pgdata:/var/lib/postgresql/data
       - ./postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
     networks:
       - appnet
-
-  minio:
-    image: minio/minio
-    container_name: ip_minio
-    command: server /data --console-address ":9001"
-    environment:
-      MINIO_ROOT_USER: minioadmin
-      MINIO_ROOT_PASSWORD: minioadmin
-    volumes:
-      - minio_data:/data
-    ports:
-      - "9001:9001"  # web console, useful for debugging
-    networks:
-      - appnet
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   redis:
     image: redis:7-alpine
-    container_name: ip_redis
+    container_name: pa_redis
     restart: always
     networks:
       - appnet
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  minio:
+    image: minio/minio
+    container_name: pa_minio
+    restart: always
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY}
+    volumes:
+      - minio_data:/data
+    ports:
+      - "9001:9001"
+    networks:
+      - appnet
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
 
 networks:
   appnet:
@@ -113,7 +162,3 @@ networks:
 volumes:
   pgdata:
   minio_data:
-
-
-
-      

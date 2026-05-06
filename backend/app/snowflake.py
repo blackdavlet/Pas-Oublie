@@ -4,7 +4,7 @@ import threading
 from datetime import datetime, timezone
 
 
-EPOCH = int(datetime(2023, 5, 29, 9, 40, 0, tzinfo=timezone.utc))   #1685353200000
+EPOCH = int(datetime(2023, 5, 29, 9, 40, 0, tzinfo=timezone.utc)) #1685353200000
 
 MACHINE_ID_BITS = 10
 SEQUENCE_BITS = 12
