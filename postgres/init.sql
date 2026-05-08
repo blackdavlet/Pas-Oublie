@@ -40,7 +40,7 @@ CREATE TABLE IF NOT EXISTS file (
     file_id BIGINT PRIMARY KEY,
     user_id INTEGER NOT NULL,
     workspace_id INTEGER,
-    folder_id INTEGER NOT NULL,
+    folder_id INTEGER,
     filename VARCHAR(255) NOT NULL,
     mime_type VARCHAR(127),
     uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
