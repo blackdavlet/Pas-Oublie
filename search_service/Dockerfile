@@ -5,4 +5,4 @@ COPY requirements.txt .
 RUN uv pip install --system --no-cache -r requirements.txt
 COPY search.proto search_pb2.py search_pb2_grpc.py server.py ./
 EXPOSE 50052
-CMD ["python", "server.py"]
+CMD ["python", "search_service.py"]
