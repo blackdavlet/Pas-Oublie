@@ -1,5 +1,5 @@
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
-CREATE EXTENSION IF NOT EXISTS pgvector;
+CREATE EXTENSION IF NOT EXISTS vector;
 CREATE TYPE user_role AS ENUM ('owner', 'editor', 'viewer');
 
 CREATE TABLE IF NOT EXISTS users (
