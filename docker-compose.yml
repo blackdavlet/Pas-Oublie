@@ -78,8 +78,8 @@ services:
       timeout: 5s
       retries: 3
 
-  index_worker:
-    build: ./index_worker
+  index-worker:
+    build: ./index-worker
     container_name: pa_worker
     restart: always
     environment:
