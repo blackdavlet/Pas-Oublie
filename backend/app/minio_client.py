@@ -1,5 +1,6 @@
 import os
 from minio import Minio
+from io import BytesIO
 
 BUCKET = "pasoublie-files"
 
@@ -20,9 +21,9 @@ def get_client() -> Minio:
 
 
 def init_multipart(object_name: str) -> str:
-    """Start a multipart upload, returns upload_id from MinIO."""
+    
     client = get_client()
-    upload_id = client._create_multipart_upload(BUCKET, object_name, {})
+    upload_id = client._create_multipart_upload(BUCKET, object_name, headers={})
     return upload_id
 
 
@@ -30,10 +31,14 @@ def upload_part(object_name: str, upload_id: str,
                 part_number: int, data: bytes) -> str:
     """Upload one chunk, returns etag."""
     client = get_client()
-    from io import BytesIO
+    
     etag = client._upload_part(
-        BUCKET, object_name, upload_id,
-        part_number, BytesIO(data), len(data)
+        BUCKET, 
+        str(object_name), 
+        str(upload_id),
+        int(part_number), 
+        BytesIO(data), 
+        len(data)
     )
     return etag
 
@@ -44,7 +49,7 @@ def complete_multipart(object_name: str, upload_id: str, parts: list) -> str:
     Returns final storage path.
     """
     client = get_client()
-    from minio.commonconfig import Part
+    from minio.messages import Part
     client._complete_multipart_upload(
         BUCKET, object_name, upload_id,
         [Part(p["part"], p["etag"]) for p in parts]
