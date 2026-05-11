@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Pas Oublié</title>
+  <link rel="stylesheet" href="style.css" />
+  <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;500;600;700;800&family=DM+Mono:ital,wght@0,300;0,400;0,500;1,300&display=swap" rel="stylesheet" />
+</head>
+<body>
+
+<!-- AUTH SCREEN -->
+<div id="auth-screen" class="screen active">
+  <div class="auth-bg">
+    <div class="auth-grid"></div>
+    <div class="auth-orb orb1"></div>
+    <div class="auth-orb orb2"></div>
+  </div>
+  <div class="auth-container">
+    <div class="brand">
+      <div class="brand-mark">PO</div>
+      <div class="brand-text">
+        <h1>Pas Oublié</h1>
+        <span>Corporate Cloud Storage</span>
+      </div>
+    </div>
+
+    <div class="auth-card">
+      <div class="auth-tabs">
+        <button class="auth-tab active" data-tab="login">Sign In</button>
+        <button class="auth-tab" data-tab="register">Register</button>
+      </div>
+
+      <!-- LOGIN -->
+      <div class="auth-panel active" id="panel-login">
+        <div class="field">
+          <label>Email</label>
+          <input type="email" id="login-email" placeholder="you@company.com" />
+        </div>
+        <div class="field">
+          <label>Password</label>
+          <input type="password" id="login-password" placeholder="••••••••" />
+        </div>
+        <button class="btn-primary" id="btn-login">
+          <span>Sign In</span>
+          <div class="btn-arrow">→</div>
+        </button>
+        <div class="auth-error" id="login-error"></div>
+      </div>
+
+      <!-- REGISTER -->
+      <div class="auth-panel" id="panel-register">
+        <div class="field">
+          <label>Username</label>
+          <input type="text" id="reg-username" placeholder="blackdavlet" />
+        </div>
+        <div class="field">
+          <label>Email</label>
+          <input type="email" id="reg-email" placeholder="you@company.com" />
+        </div>
+        <div class="field">
+          <label>Password</label>
+          <input type="password" id="reg-password" placeholder="••••••••" />
+        </div>
+        <button class="btn-primary" id="btn-register">
+          <span>Create Account</span>
+          <div class="btn-arrow">→</div>
+        </button>
+        <div class="auth-error" id="reg-error"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- APP SCREEN -->
+<div id="app-screen" class="screen">
+
+  <!-- SIDEBAR -->
+  <aside class="sidebar">
+    <div class="sidebar-top">
+      <div class="sidebar-brand">
+        <div class="brand-mark sm">PO</div>
+        <span>Pas Oublié</span>
+      </div>
+      <div class="user-chip" id="user-chip">
+        <div class="user-avatar" id="user-avatar">?</div>
+        <span id="user-name">Loading...</span>
+      </div>
+    </div>
+
+    <nav class="sidebar-nav">
+      <button class="nav-item active" data-view="files">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V7z"/></svg>
+        Files
+      </button>
+      <button class="nav-item" data-view="search">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.35-4.35"/></svg>
+        AI Search
+      </button>
+      <button class="nav-item" data-view="workspaces">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+        Workspaces
+      </button>
+    </nav>
+
+    <div class="sidebar-footer">
+      <button class="btn-logout" id="btn-logout">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"/></svg>
+        Sign Out
+      </button>
+    </div>
+  </aside>
+
+  <!-- MAIN CONTENT -->
+  <main class="main">
+
+    <!-- FILES VIEW -->
+    <div class="view active" id="view-files">
+      <div class="view-header">
+        <div>
+          <h2>Files</h2>
+          <p class="view-sub" id="files-breadcrumb">Select a workspace and folder</p>
+        </div>
+        <div class="header-actions">
+          <button class="btn-secondary" id="btn-new-folder">+ Folder</button>
+          <button class="btn-primary sm" id="btn-upload-trigger">↑ Upload File</button>
+        </div>
+      </div>
+
+      <!-- WORKSPACE + FOLDER SELECTORS -->
+      <div class="selectors">
+        <div class="selector-group">
+          <label>Workspace</label>
+          <select id="workspace-select">
+            <option value="">— select workspace —</option>
+          </select>
+        </div>
+        <div class="selector-group">
+          <label>Folder</label>
+          <select id="folder-select">
+            <option value="">— select folder —</option>
+          </select>
+        </div>
+        <button class="btn-icon" id="btn-refresh-files" title="Refresh">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+        </button>
+      </div>
+
+      <!-- UPLOAD ZONE -->
+      <div class="upload-zone" id="upload-zone">
+        <div class="upload-zone-inner">
+          <div class="upload-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/></svg>
+          </div>
+          <p>Drop files here or <label for="file-input" class="upload-link">browse</label></p>
+          <span>Any file type · Any size</span>
+        </div>
+        <input type="file" id="file-input" hidden multiple />
+      </div>
+
+      <!-- UPLOAD PROGRESS -->
+      <div class="upload-progress-list" id="upload-progress-list"></div>
+
+      <!-- FILES TABLE -->
+      <div class="files-table-wrap">
+        <table class="files-table">
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>Uploaded</th>
+              <th>Type</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="files-tbody">
+            <tr class="empty-row">
+              <td colspan="4">Select a workspace and folder to see files</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- SEARCH VIEW -->
+    <div class="view" id="view-search">
+      <div class="view-header">
+        <div>
+          <h2>AI Search</h2>
+          <p class="view-sub">Semantic search powered by vector embeddings</p>
+        </div>
+      </div>
+
+      <div class="search-bar-wrap">
+        <div class="search-bar">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.35-4.35"/></svg>
+          <input type="text" id="search-input" placeholder="Search your files with natural language..." />
+          <select id="search-workspace-select">
+            <option value="">All workspaces</option>
+          </select>
+          <button class="btn-primary sm" id="btn-search">Search</button>
+        </div>
+      </div>
+
+      <div class="search-results" id="search-results">
+        <div class="search-empty">
+          <div class="search-empty-icon">◎</div>
+          <p>Ask anything about your files</p>
+          <span>e.g. "quarterly budget reports" or "meeting notes from last week"</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- WORKSPACES VIEW -->
+    <div class="view" id="view-workspaces">
+      <div class="view-header">
+        <div>
+          <h2>Workspaces</h2>
+          <p class="view-sub">Collaborative spaces for your team</p>
+        </div>
+        <button class="btn-primary sm" id="btn-new-workspace">+ New Workspace</button>
+      </div>
+
+      <div class="workspaces-grid" id="workspaces-grid">
+        <div class="ws-empty">Loading workspaces...</div>
+      </div>
+
+      <!-- ADD MEMBER PANEL -->
+      <div class="member-panel" id="member-panel" style="display:none">
+        <div class="member-panel-header">
+          <h3>Add Member to <span id="member-panel-ws-name"></span></h3>
+          <button class="btn-close" id="btn-close-member-panel">✕</button>
+        </div>
+        <div class="field">
+          <label>User ID</label>
+          <input type="number" id="member-user-id" placeholder="Enter user ID" />
+        </div>
+        <div class="field">
+          <label>Role</label>
+          <select id="member-role">
+            <option value="editor">Editor</option>
+            <option value="viewer">Viewer</option>
+            <option value="owner">Owner</option>
+          </select>
+        </div>
+        <button class="btn-primary" id="btn-add-member">Add Member</button>
+        <div class="auth-error" id="member-error"></div>
+      </div>
+    </div>
+
+  </main>
+</div>
+
+<!-- MODALS -->
+<div class="modal-overlay" id="modal-overlay">
+  <!-- NEW WORKSPACE MODAL -->
+  <div class="modal" id="modal-workspace">
+    <div class="modal-header">
+      <h3>New Workspace</h3>
+      <button class="btn-close" data-close-modal>✕</button>
+    </div>
+    <div class="field">
+      <label>Workspace Name</label>
+      <input type="text" id="ws-name-input" placeholder="Team Alpha" />
+    </div>
+    <button class="btn-primary" id="btn-create-workspace">Create Workspace</button>
+    <div class="auth-error" id="ws-error"></div>
+  </div>
+
+  <!-- NEW FOLDER MODAL -->
+  <div class="modal" id="modal-folder">
+    <div class="modal-header">
+      <h3>New Folder</h3>
+      <button class="btn-close" data-close-modal>✕</button>
+    </div>
+    <div class="field">
+      <label>Folder Name</label>
+      <input type="text" id="folder-name-input" placeholder="Documents" />
+    </div>
+    <button class="btn-primary" id="btn-create-folder">Create Folder</button>
+    <div class="auth-error" id="folder-error"></div>
+  </div>
+</div>
+
+<!-- TOAST -->
+<div class="toast-container" id="toast-container"></div>
+
+<script src="app.js"></script>
+</body>
+</html>

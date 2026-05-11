@@ -1,0 +1,27 @@
+syntax = "proto3";
+
+package storagepb;
+
+service StorageService {
+    rpc DownloadFile (DownloadRequest) returns (DownloadResponse);
+    rpc DeleteFile (DeleteRequest) returns (DeleteResponse);
+}
+
+message DownloadRequest {
+    string storage_path = 1;  
+}
+
+message DownloadResponse {
+    bytes file_data = 1;
+    string filename = 2;
+    string mime_type = 3;
+    int64 size_bytes = 4;
+}
+
+message DeleteRequest {
+    string storage_path = 1;
+}
+
+message DeleteResponse {
+    bool success = 1;
+}

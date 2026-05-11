@@ -1,0 +1,7 @@
+asyncpg==0.29.0
+redis==5.0.4
+minio==7.2.0
+pdfplumber==0.10.3
+python-docx==0.8.11
+openai==1.6.1
+httpx==0.25.2
