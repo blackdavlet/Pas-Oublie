@@ -31,18 +31,15 @@ services:
       REDIS_URL: redis://redis:6379/0
       STORAGE_SERVICE_URL: storage_service:50051
       SEARCH_SERVICE_URL: search_service:50052
-      MINIO_ENDPOINT: minio:9000
-      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY}
-      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY}
-      MINIO_PUBLIC_ENDPOINT: ${MINIO_PUBLIC_ENDPOINT}
-      MINIO_BUCKET: ${MINIO_BUCKET}
+      SEAWEED_MASTERR: seaweedfs:9333
+      SEAWEED_FILER: seaweedfs:8080
       JWT_SECRET: ${JWT_SECRET}
       OPENAI_API_KEY: ${OPENAI_API_KEY}
       MACHINE_ID: 1
     depends_on:
       - postgres
       - redis
-      - minio
+      - seaweedfs
       - storage_service
       - search_service
     networks:
@@ -58,11 +55,10 @@ services:
     container_name: pa_storage
     restart: always
     environment:
-      MINIO_ENDPOINT: minio:9000
-      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY}
-      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY}
+      SEAWEED_MASTER: seaweedfs:9333
+      
     depends_on:
-      - minio
+      - seaweedfs
     networks:
       - appnet
     healthcheck:
@@ -95,14 +91,12 @@ services:
     environment:
       DATABASE_URL: postgresql://${DB_USER}:${DB_PASSWORD}@postgres:5432/${DB_NAME}
       REDIS_URL: redis://redis:6379/0
-      MINIO_ENDPOINT: minio:9000
-      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY}
-      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY}
+      SEAWEED_MASTER: seaweedfs:9333
       OPENAI_API_KEY: ${OPENAI_API_KEY}
     depends_on:
       - postgres
       - redis
-      - minio
+      - seaweedfs
     networks:
       - appnet
 
@@ -137,25 +131,19 @@ services:
       timeout: 5s
       retries: 3
 
-  minio:
-    image: minio/minio
-    container_name: pa_minio
+  seaweedfs:
+    image: chrislusf/seaweedfs
+    container_name: pa_seaweed
     restart: always
-    command: server /data --console-address ":9001"
-    environment:
-      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY}
-      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY}
+    command: "server -dir=/data -s3"
     volumes:
-      - minio_data:/data
+      - ./seaweedfs/data:/data
     ports:
-      - "9001:9001"  # console for debugging
+      - "9000:9000" # s3-compatible api
+      - "9333:9333" #master
+      - "8080:8080" # volume server
     networks:
       - appnet
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
 
 networks:
   appnet:
@@ -163,4 +151,4 @@ networks:
 
 volumes:
   pgdata:
-  minio_data:
+  seaweedfs_data:
