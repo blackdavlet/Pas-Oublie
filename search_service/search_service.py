@@ -1,8 +1,8 @@
 import os
-from concurrent import futures
+import asyncio
 import grpc
 import asyncpg
-import asyncio
+from concurrent import futures
 from openai import OpenAI
 
 import search_pb2
@@ -12,14 +12,6 @@ DATABASE_URL = os.environ["DATABASE_URL"]
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
 
 _openai = OpenAI(api_key=OPENAI_API_KEY)
-_pool = None
-
-
-async def get_pool():
-    global _pool
-    if _pool is None:
-        _pool = await asyncpg.create_pool(DATABASE_URL, min_size=1, max_size=5)
-    return _pool
 
 
 def generate_query_embedding(query: str) -> list[float]:
@@ -29,6 +21,36 @@ def generate_query_embedding(query: str) -> list[float]:
     )
     return response.data[0].embedding
 
+async def _query_pgvector(embedding, workspace_id, limit):
+    con = await asyncpg.connect(DATABASE_URL)
+    try:
+        if workspace_id:
+            return await con.fetch(
+                """
+                SELECT f.file_id, f.filename, f.storage_path,
+                       (2 - (fe.embedding <-> $1::vector)) / 2 as similarity
+                FROM file_embeddings fe
+                JOIN file f ON fe.file_id = f.file_id
+                WHERE f.workspace_id = $2
+                ORDER BY fe.embedding <-> $1::vector
+                LIMIT $3
+                """,
+                str(embedding), workspace_id, limit
+            )
+        else:
+            return await con.fetch(
+                """
+                SELECT f.file_id, f.filename, f.storage_path,
+                       (2 - (fe.embedding <-> $1::vector)) / 2 as similarity
+                FROM file_embeddings fe
+                JOIN file f ON fe.file_id = f.file_id
+                ORDER BY fe.embedding <-> $1::vector
+                LIMIT $2
+                """,
+                str(embedding), limit
+            )
+    finally:
+        await con.close()
 
 class SearchServicer(search_pb2_grpc.SearchServiceServicer):
 
@@ -36,16 +58,11 @@ class SearchServicer(search_pb2_grpc.SearchServiceServicer):
         try:
             query_embedding = generate_query_embedding(request.query)
             limit = request.limit if request.limit > 0 else 10
+            workspace_id = request.workspace_id if request.workspace_id else None
 
-            loop = asyncio.new_event_loop()
-            rows = loop.run_until_complete(
-                self._query_pgvector(
-                    query_embedding,
-                    request.workspace_id,
-                    limit
-                )
+            rows = asyncio.run(
+                _query_pgvector(query_embedding, workspace_id, limit)
             )
-            loop.close()
 
             results = []
             for row in rows:
@@ -61,23 +78,6 @@ class SearchServicer(search_pb2_grpc.SearchServiceServicer):
         except Exception as e:
             context.abort(grpc.StatusCode.INTERNAL, str(e))
 
-    async def _query_pgvector(self, embedding: list, workspace_id: int, limit: int):
-        pool = await get_pool()
-        async with pool.acquire() as con:
-            return await con.fetch(
-                """
-                SELECT f.file_id, f.filename, f.storage_path,
-                       1 - (fe.embedding <-> $1::vector) as similarity
-                FROM file_embeddings fe
-                JOIN file f ON fe.file_id = f.file_id
-                WHERE f.workspace_id = $2
-                ORDER BY fe.embedding <-> $1::vector
-                LIMIT $3
-                """,
-                str(embedding), workspace_id, limit
-            )
-
-
 def serve():
     server = grpc.server(futures.ThreadPoolExecutor(max_workers=4))
     search_pb2_grpc.add_SearchServiceServicer_to_server(SearchServicer(), server)
@@ -89,4 +89,5 @@ def serve():
 
 if __name__ == "__main__":
     serve()
-    
+
+

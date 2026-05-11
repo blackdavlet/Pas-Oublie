@@ -1,16 +1,17 @@
 import os
 import uuid
 import json
+import requests as req_lib
 from pathlib import Path
 
 from fastapi import FastAPI, UploadFile, File, HTTPException, Depends, Request
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import JSONResponse, Response, RedirectResponse, StreamingResponse
 from pydantic import BaseModel
 
 
 from app import db
 from app import ws
-from app import minio_client
+from app import seaweedfs_client
 from app import grpc_client
 from app import auth                    
 from app.snowflake import generate_id
@@ -83,7 +84,7 @@ async def upload(
 
     object_name = f"{workspace_id}/{uuid.uuid4().hex}/{filename}"
 
-    upload_id = minio_client.init_multipart(object_name)
+    upload_id = seaweedfs_client.init_multipart(object_name)
 
     await _r.hset(f"upload:{upload_id}", mapping={
         "filename": filename,
@@ -111,7 +112,7 @@ async def upload_chunk(
 
     data = await chunk.read()
 
-    etag = minio_client.upload_part(
+    etag = seaweedfs_client.upload_part(
         meta["object_name"], upload_id, part_number, data
     )
 
@@ -129,7 +130,7 @@ async def upload_complete(upload_id: str):
 
     parts = json.loads(meta["parts"])
 
-    storage_path = minio_client.complete_multipart(
+    storage_path = seaweedfs_client.complete_multipart(
         meta["object_name"], upload_id, parts
     )
 
@@ -174,26 +175,50 @@ async def get_file(
         "file_id": str(file["file_id"]),
         "filename": file["filename"],
         "uploaded_at": file["uploaded_at"].isoformat(),
-        "mime_type": file["mime_type"]
+        "mime_type": file["mime_type"],
+        "size_bytes": file["size_bytes"]
     }
 
 @app.get("/files/{file_id}/download")
-async def download_file(
-    file_id: str,
-    current_user=Depends(get_current_user)
-):
-    file = await db.get_file_by_id(file_id)
-    if file is None:
+async def download_file(file_id: str, current_user=Depends(get_current_user)):
+    file = await db.get_file_by_id(int(file_id))
+    if not file:
         raise HTTPException(404, "File not found")
-    
-    result = grpc_client.download_file(file["storage_path"])
 
-    return Response(
-        content=result.file_data,
-        media_type=result.mime_type,
-        headers={
-            "Content-Disposition": f"attachment; filename={result.filename}"
-        }
+    import json
+    import requests as req_lib
+    meta = json.loads(file["storage_path"])
+    fids = meta["fids"]
+    SEAWEED_MASTER = os.environ.get("SEAWEED_MASTER", "seaweedfs:9333")
+
+    def get_chunk_url(fid):
+        vol_id = fid.split(",")[0]
+        lookup = req_lib.get(f"http://{SEAWEED_MASTER}/dir/lookup?volumeId={vol_id}").json()
+        public_url = lookup['locations'][0]['publicUrl']
+        return f"http://{public_url}/{fid}"
+
+    def stream_chunks():
+        for fid in fids:
+            vol_id = fid.split(",")[0]
+            res = req_lib.get(f"http://{SEAWEED_MASTER}/dir/lookup?volumeId={vol_id}")
+            location = res.json()["locations"][0]["publicUrl"]
+            chunk_res = req_lib.get(f"http://{location}/{fid}", stream=True)
+            for data in chunk_res.iter_content(chunk_size=1024*1024):
+                yield data
+
+    # get total size for Content-Length header
+    total_size = 0
+    if len(fids) <= 5:
+        total_size = sum(int(req_lib.head(get_chunk_url(fid)).headers.get('content-length', 0)) for fid in fids)
+
+    headers = {"Content-Disposition": f"attachment; filename={file['filename']}"}
+    if total_size:
+        headers["Content-Length"] = str(total_size)
+
+    return StreamingResponse(
+        stream_chunks(),
+        media_type="application/octet-stream",
+        headers=headers
     )
 
 @app.delete("/files/{file_id}/delete")
@@ -219,13 +244,27 @@ async def delete_file(
 @app.get("/search")
 async def search(
     query: str,
-    workspace_id: int,
+    workspace_id: int = None,
     current_user=Depends(get_current_user)
 ):
     if not query.strip():
         raise HTTPException(400, "Query cannot be empty")
-    results = grpc_client.search(query, workspace_id)
-    return {"results": results}
+    
+    # if no workspace specified, get all user's workspaces
+    if not workspace_id:
+        user_workspaces = await db.get_user_workspaces(current_user["user_id"])
+        workspace_ids = [w["workspace_id"] for w in user_workspaces]
+    else:
+        workspace_ids = [workspace_id]
+    
+    all_results = []
+    for ws_id in workspace_ids:
+        results = grpc_client.search(query, ws_id)
+        all_results.extend(results)
+    
+    # sort by similarity descending
+    all_results.sort(key=lambda x: x["similarity"], reverse=True)
+    return {"results": all_results[:10]}
 
 @app.post("/workspaces")
 async def create_workspace(

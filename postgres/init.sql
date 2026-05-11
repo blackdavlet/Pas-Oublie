@@ -43,6 +43,7 @@ CREATE TABLE IF NOT EXISTS file (
     folder_id INTEGER,
     filename VARCHAR(255) NOT NULL,
     mime_type VARCHAR(127),
+    size_bytes BIGINT NOT NULL,
     uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     storage_path VARCHAR(512) NOT NULL,
     FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE,
