@@ -55,17 +55,17 @@ async def create_workspace(workspace_name: str, owner_id: int):
             return workspace
         
 
-async def create_file(user_id: int, filename: str, folder_id: int, workspace_id: int, mime_type: str, storage_path: str):
+async def create_file(user_id: int, filename: str, folder_id: int, workspace_id: int, mime_type: str, storage_path: str, size_bytes: int):
     pool = await get_pool()
     file_id = generate_id()
     async with pool.acquire() as con:
         return await con.fetchrow(
             """
-            INSERT INTO file (file_id, user_id, filename, folder_id, workspace_id, mime_type, storage_path)      
-            VALUES ($1, $2, $3, $4, $5, $6, $7)
+            INSERT INTO file (file_id, user_id, filename, folder_id, workspace_id, mime_type, storage_path, size_bytes)      
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
             RETURNING file_id, filename, uploaded_at
             """,
-                file_id, user_id, filename, folder_id, workspace_id, mime_type, storage_path                   #------------NEW-FILE
+                file_id, user_id, filename, folder_id, workspace_id, mime_type, size_bytes, storage_path                  #------------NEW-FILE
         )
     
 
