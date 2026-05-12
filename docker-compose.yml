@@ -152,3 +152,6 @@ networks:
 volumes:
   pgdata:
   seaweedfs_data:
+
+
+  # test for push
