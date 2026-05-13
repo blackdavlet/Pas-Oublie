@@ -1,36 +1,28 @@
-/* ─── CONFIG ────────────────────────────────────────── */
-const API = '';  // empty = same origin (goes through Nginx)
-const CHUNK_SIZE = 5 * 1024 * 1024; // 5MB chunks
+/* ── CONFIG ─────────────────────────────────────── */
+const API = '';
+const CHUNK_SIZE = 20 * 1024 * 1024; // 20MB chunks
 
-/* ─── STATE ─────────────────────────────────────────── */
+/* ── STATE ──────────────────────────────────────── */
 let token = localStorage.getItem('token') || null;
 let currentUser = null;
-let currentWorkspaceId = null;
-let currentFolderSelect = null;
-let memberTargetWsId = null;
-let ws = null; // WebSocket connection
+let wsConn = null;
+let downloads = {}; // { id: { name, size, loaded, speed, status, controller, chunks } }
+let uploadControllers = {}; // { uploadId: AbortController }
 
-/* ─── HELPERS ───────────────────────────────────────── */
-async function api(method, path, body = null, isForm = false) {
+/* ── API ─────────────────────────────────────────── */
+async function api(method, path, body = null, isForm = false, signal = null) {
   const headers = {};
   if (token) headers['Authorization'] = `Bearer ${token}`;
   if (body && !isForm) headers['Content-Type'] = 'application/json';
-
   const res = await fetch(`${API}${path}`, {
-    method,
-    headers,
+    method, headers, signal,
     body: isForm ? body : (body ? JSON.stringify(body) : null),
   });
-
-  if (res.status === 401) {
-    logout();
-    throw new Error('Unauthorized');
-  }
-
+  if (res.status === 401) { logout(); throw new Error('Unauthorized'); }
   const text = await res.text();
   try {
     const data = JSON.parse(text);
-    if (!res.ok) throw new Error(data.detail || 'Request failed');
+    if (!res.ok) throw new Error(data.detail || JSON.stringify(data));
     return data;
   } catch (e) {
     if (!res.ok) throw new Error(text || 'Request failed');
@@ -38,35 +30,39 @@ async function api(method, path, body = null, isForm = false) {
   }
 }
 
+/* ── TOAST ───────────────────────────────────────── */
 function toast(msg, type = 'info') {
   const el = document.createElement('div');
   el.className = `toast ${type}`;
   el.textContent = msg;
-  document.getElementById('toast-container').appendChild(el);
+  document.getElementById('toasts').appendChild(el);
   setTimeout(() => el.remove(), 4000);
 }
 
-function fileIcon(filename) {
-  const ext = filename.split('.').pop().toLowerCase();
-  const map = {
-    pdf: '📄', doc: '📝', docx: '📝', txt: '📃',
-    xls: '📊', xlsx: '📊', csv: '📊',
-    png: '🖼', jpg: '🖼', jpeg: '🖼', gif: '🖼', webp: '🖼',
-    mp4: '🎬', mov: '🎬', avi: '🎬',
-    mp3: '🎵', wav: '🎵',
-    zip: '📦', rar: '📦', tar: '📦',
-    py: '🐍', js: '⚡', ts: '⚡', html: '🌐', css: '🎨',
-  };
-  return map[ext] || '📁';
+/* ── UTILS ───────────────────────────────────────── */
+function fileIcon(name) {
+  const ext = (name.split('.').pop() || '').toLowerCase();
+  const m = { pdf:'📄', doc:'📝', docx:'📝', txt:'📃', xls:'📊', xlsx:'📊', csv:'📊', png:'🖼', jpg:'🖼', jpeg:'🖼', gif:'🖼', webp:'🖼', mp4:'🎬', mov:'🎬', avi:'🎬', mkv:'🎬', mp3:'🎵', wav:'🎵', flac:'🎵', zip:'📦', rar:'📦', tar:'📦', gz:'📦', py:'🐍', js:'⚡', ts:'⚡', html:'🌐', css:'🎨', pptx:'📊', ppt:'📊' };
+  return m[ext] || '📁';
 }
 
-function formatDate(iso) {
-  return new Date(iso).toLocaleDateString('en-US', {
-    month: 'short', day: 'numeric', year: 'numeric',
-    hour: '2-digit', minute: '2-digit'
-  });
+function fmtDate(iso) {
+  return new Date(iso).toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' });
 }
 
+function fmtSize(bytes) {
+  if (bytes < 1024) return bytes + ' B';
+  if (bytes < 1024*1024) return (bytes/1024).toFixed(1) + ' KB';
+  if (bytes < 1024*1024*1024) return (bytes/1024/1024).toFixed(1) + ' MB';
+  return (bytes/1024/1024/1024).toFixed(2) + ' GB';
+}
+
+function fmtSpeed(bps) {
+  if (bps < 1024*1024) return (bps/1024).toFixed(0) + ' KB/s';
+  return (bps/1024/1024).toFixed(1) + ' MB/s';
+}
+
+/* ── SCREENS & VIEWS ─────────────────────────────── */
 function showScreen(id) {
   document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
   document.getElementById(id).classList.add('active');
@@ -75,110 +71,82 @@ function showScreen(id) {
 function showView(id) {
   document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
   document.getElementById(`view-${id}`).classList.add('active');
-  document.querySelectorAll('.nav-item').forEach(n => {
-    n.classList.toggle('active', n.dataset.view === id);
-  });
+  document.querySelectorAll('.nav-item').forEach(n => n.classList.toggle('active', n.dataset.view === id));
 }
 
-function showModal(id) {
-  document.getElementById('modal-overlay').classList.add('active');
-  document.querySelectorAll('.modal').forEach(m => m.classList.remove('active'));
-  document.getElementById(`modal-${id}`).classList.add('active');
+/* ── MODALS ──────────────────────────────────────── */
+function openModal(id) {
+  document.getElementById('modal-backdrop').classList.add('open');
+  document.querySelectorAll('.modal').forEach(m => m.classList.remove('open'));
+  document.getElementById(`modal-${id}`).classList.add('open');
 }
 
 function closeModals() {
-  document.getElementById('modal-overlay').classList.remove('active');
-  document.querySelectorAll('.modal').forEach(m => m.classList.remove('active'));
+  document.getElementById('modal-backdrop').classList.remove('open');
+  document.querySelectorAll('.modal').forEach(m => m.classList.remove('open'));
 }
 
-/* ─── AUTH ──────────────────────────────────────────── */
+/* ── AUTH ────────────────────────────────────────── */
 async function login() {
   const email = document.getElementById('login-email').value.trim();
   const password = document.getElementById('login-password').value;
-  const errEl = document.getElementById('login-error');
-  errEl.textContent = '';
-
+  const err = document.getElementById('login-error');
+  err.textContent = '';
   try {
     const data = await api('POST', '/auth/login', { email, password });
     token = data.token;
     localStorage.setItem('token', token);
     await initApp();
-  } catch (e) {
-    errEl.textContent = e.message;
-  }
+  } catch (e) { err.textContent = e.message; }
 }
 
 async function register() {
   const username = document.getElementById('reg-username').value.trim();
   const email = document.getElementById('reg-email').value.trim();
   const password = document.getElementById('reg-password').value;
-  const errEl = document.getElementById('reg-error');
-  errEl.textContent = '';
-
+  const err = document.getElementById('reg-error');
+  err.textContent = '';
   try {
     const data = await api('POST', '/auth/register', { username, email, password });
     token = data.token;
     localStorage.setItem('token', token);
     await initApp();
-  } catch (e) {
-    errEl.textContent = e.message;
-  }
+  } catch (e) { err.textContent = e.message; }
 }
 
 function logout() {
-  token = null;
-  currentUser = null;
+  token = null; currentUser = null;
   localStorage.removeItem('token');
-  if (ws) ws.close();
+  if (wsConn) wsConn.close();
   showScreen('auth-screen');
 }
 
-/* ─── INIT APP ──────────────────────────────────────── */
+/* ── INIT ────────────────────────────────────────── */
 async function initApp() {
   try {
     currentUser = await api('GET', '/auth/me');
     document.getElementById('user-name').textContent = currentUser.username;
     document.getElementById('user-avatar').textContent = currentUser.username[0].toUpperCase();
     showScreen('app-screen');
-    await loadWorkspaces();
     showView('files');
+    loadWorkspaces().catch(e => console.warn('workspaces:', e)); // ← non-fatal
   } catch (e) {
+    console.error('initApp failed:', e);
     logout();
   }
 }
 
-/* ─── WORKSPACES ────────────────────────────────────── */
+/* ── WORKSPACES ──────────────────────────────────── */
 async function loadWorkspaces() {
   const data = await api('GET', '/workspaces');
   const workspaces = data.workspaces || [];
 
-  // populate grid
-  const grid = document.getElementById('workspaces-grid');
-  if (workspaces.length === 0) {
-    grid.innerHTML = '<div class="ws-empty">No workspaces yet. Create one to get started.</div>';
-  } else {
-    grid.innerHTML = workspaces.map(w => `
-      <div class="ws-card" data-ws-id="${w.workspace_id}">
-        <div class="ws-card-top">
-          <div class="ws-card-icon">🏢</div>
-          <span class="ws-role-badge ${w.role}">${w.role}</span>
-        </div>
-        <div>
-          <div class="ws-card-name">${w.workspace_name}</div>
-          <div class="ws-card-id">ID: ${w.workspace_id}</div>
-        </div>
-        <div class="ws-card-actions">
-          <button class="btn-file-action" onclick="openAddMember(${w.workspace_id}, '${w.workspace_name}')">+ Member</button>
-        </div>
-      </div>
-    `).join('');
-  }
-
-  // populate workspace selects
+  // sidebar selects
   const wsSelect = document.getElementById('workspace-select');
-  const searchWsSelect = document.getElementById('search-workspace-select');
+  const searchWsSelect = document.getElementById('search-ws-select');
+  const prev = wsSelect.value;
 
-  wsSelect.innerHTML = '<option value="">— select workspace —</option>';
+  wsSelect.innerHTML = '<option value="">Select workspace</option>';
   searchWsSelect.innerHTML = '<option value="">All workspaces</option>';
 
   workspaces.forEach(w => {
@@ -186,30 +154,52 @@ async function loadWorkspaces() {
     searchWsSelect.innerHTML += `<option value="${w.workspace_id}">${w.workspace_name}</option>`;
   });
 
+  if (prev) wsSelect.value = prev;
+
+  // grid
+  const grid = document.getElementById('workspaces-grid');
+  if (!workspaces.length) {
+    grid.innerHTML = '<div class="files-empty">No workspaces yet. Create one to get started.</div>';
+  } else {
+    grid.innerHTML = workspaces.map(w => `
+      <div class="ws-card">
+        <div class="ws-card-top">
+          <div class="ws-icon">🏢</div>
+          <span class="role-pill role-${w.role}">${w.role}</span>
+        </div>
+        <div class="ws-name">${w.workspace_name}</div>
+        <div class="ws-id">ID: ${w.workspace_id}</div>
+        <div class="ws-actions">
+          <button class="btn-file" onclick="openAddMember(${w.workspace_id}, '${w.workspace_name}')">+ Member</button>
+        </div>
+      </div>
+    `).join('');
+  }
+
+  // storage indicator
+  document.getElementById('storage-count').textContent = `${workspaces.length} workspace${workspaces.length !== 1 ? 's' : ''}`;
+
   return workspaces;
 }
 
 async function createWorkspace() {
-  const name = document.getElementById('ws-name-input').value.trim();
-  const errEl = document.getElementById('ws-error');
-  errEl.textContent = '';
-
-  if (!name) { errEl.textContent = 'Workspace name is required'; return; }
-
+  const name = document.getElementById('ws-name').value.trim();
+  const err = document.getElementById('ws-error');
+  err.textContent = '';
+  if (!name) { err.textContent = 'Name is required'; return; }
   try {
     await api('POST', '/workspaces', { workspace_name: name });
     closeModals();
-    document.getElementById('ws-name-input').value = '';
+    document.getElementById('ws-name').value = '';
     await loadWorkspaces();
     toast('Workspace created!', 'success');
-  } catch (e) {
-    errEl.textContent = e.message;
-  }
+  } catch (e) { err.textContent = e.message; }
 }
 
+let memberTargetId = null;
 function openAddMember(wsId, wsName) {
-  memberTargetWsId = wsId;
-  document.getElementById('member-panel-ws-name').textContent = wsName;
+  memberTargetId = wsId;
+  document.getElementById('member-ws-name').textContent = wsName;
   document.getElementById('member-panel').style.display = 'flex';
   document.getElementById('member-panel').style.flexDirection = 'column';
 }
@@ -217,246 +207,422 @@ function openAddMember(wsId, wsName) {
 async function addMember() {
   const userId = parseInt(document.getElementById('member-user-id').value);
   const role = document.getElementById('member-role').value;
-  const errEl = document.getElementById('member-error');
-  errEl.textContent = '';
-
-  if (!userId) { errEl.textContent = 'User ID is required'; return; }
-
+  const err = document.getElementById('member-error');
+  err.textContent = '';
+  if (!userId) { err.textContent = 'User ID required'; return; }
   try {
-    await api('POST', `/workspaces/${memberTargetWsId}/members`, { user_id: userId, role });
+    await api('POST', `/workspaces/${memberTargetId}/members`, { user_id: userId, role });
     toast('Member added!', 'success');
     document.getElementById('member-user-id').value = '';
     document.getElementById('member-panel').style.display = 'none';
-  } catch (e) {
-    errEl.textContent = e.message;
-  }
+  } catch (e) { err.textContent = e.message; }
 }
 
-/* ─── FOLDERS ───────────────────────────────────────── */
-async function loadFolders(workspaceId) {
-  // There's no GET /folders endpoint so we track created folders
-  // For demo purposes, load from localStorage per workspace
-  const saved = JSON.parse(localStorage.getItem(`folders_${workspaceId}`) || '[]');
-  const folderSelect = document.getElementById('folder-select');
-  folderSelect.innerHTML = '<option value="">— select folder —</option>';
-  saved.forEach(f => {
-    folderSelect.innerHTML += `<option value="${f.folder_id}">${f.folder_name}</option>`;
-  });
+/* ── FOLDERS ─────────────────────────────────────── */
+async function loadFolders(wsId) {
+  try {
+    const data = await api('GET', `/workspaces/${wsId}/folders`);
+    const folders = data.folders || [];
+    const sel = document.getElementById('folder-select');
+    sel.innerHTML = '<option value="">Select folder</option>';
+    folders.forEach(f => {
+      sel.innerHTML += `<option value="${f.folder_id}">${f.folder_name}</option>`;
+    });
+    // also save to localStorage as cache
+    localStorage.setItem(`folders_${wsId}`, JSON.stringify(folders));
+  } catch (e) {
+    // fallback to localStorage
+    const saved = JSON.parse(localStorage.getItem(`folders_${wsId}`) || '[]');
+    const sel = document.getElementById('folder-select');
+    sel.innerHTML = '<option value="">Select folder</option>';
+    saved.forEach(f => { sel.innerHTML += `<option value="${f.folder_id}">${f.folder_name}</option>`; });
+  }
 }
 
 async function createFolder() {
-  const name = document.getElementById('folder-name-input').value.trim();
+  const name = document.getElementById('folder-name').value.trim();
   const wsId = document.getElementById('workspace-select').value;
-  const errEl = document.getElementById('folder-error');
-  errEl.textContent = '';
-
-  if (!name) { errEl.textContent = 'Folder name is required'; return; }
-  if (!wsId) { errEl.textContent = 'Select a workspace first'; return; }
-
+  const err = document.getElementById('folder-error');
+  err.textContent = '';
+  if (!name) { err.textContent = 'Name is required'; return; }
+  if (!wsId) { err.textContent = 'Select a workspace first'; return; }
   try {
     const data = await api('POST', '/folders', { folder_name: name, workspace_id: parseInt(wsId) });
-    
-    // save to localStorage for UI
     const saved = JSON.parse(localStorage.getItem(`folders_${wsId}`) || '[]');
     saved.push({ folder_id: data.folder_id, folder_name: data.folder_name });
     localStorage.setItem(`folders_${wsId}`, JSON.stringify(saved));
-
     closeModals();
-    document.getElementById('folder-name-input').value = '';
+    document.getElementById('folder-name').value = '';
     await loadFolders(wsId);
     toast('Folder created!', 'success');
-  } catch (e) {
-    errEl.textContent = e.message;
-  }
+  } catch (e) { err.textContent = e.message; }
 }
 
-/* ─── FILES ─────────────────────────────────────────── */
+/* ── FILES ───────────────────────────────────────── */
 async function loadFiles() {
   const wsId = document.getElementById('workspace-select').value;
   const folderId = document.getElementById('folder-select').value;
-  const tbody = document.getElementById('files-tbody');
-  const breadcrumb = document.getElementById('files-breadcrumb');
+  const list = document.getElementById('files-list');
+  const crumb = document.getElementById('files-breadcrumb');
 
   if (!wsId || !folderId) {
-    tbody.innerHTML = '<tr class="empty-row"><td colspan="4">Select a workspace and folder to see files</td></tr>';
+    list.innerHTML = '<div class="files-empty">Select a workspace and folder to view files</div>';
+    crumb.textContent = 'Select a workspace and folder';
     return;
   }
 
-  breadcrumb.textContent = `workspace ${wsId} / folder ${folderId}`;
-  tbody.innerHTML = '<tr class="empty-row"><td colspan="4"><div class="spinner"></div></td></tr>';
+  const wsName = document.getElementById('workspace-select').options[document.getElementById('workspace-select').selectedIndex].text;
+  const folderName = document.getElementById('folder-select').options[document.getElementById('folder-select').selectedIndex].text;
+  crumb.textContent = `${wsName} / ${folderName}`;
+
+  list.innerHTML = '<div class="files-empty"><div class="spinner"></div></div>';
 
   try {
     const data = await api('GET', `/workspaces/${wsId}/files?folder_id=${folderId}`);
     const files = data.files || [];
 
-    if (files.length === 0) {
-      tbody.innerHTML = '<tr class="empty-row"><td colspan="4">No files yet. Upload something!</td></tr>';
+    if (!files.length) {
+      list.innerHTML = '<div class="files-empty">No files yet — upload something!</div>';
       return;
     }
 
-    tbody.innerHTML = files.map(f => `
-      <tr>
-        <td>
-          <div class="file-name-cell">
-            <div class="file-icon">${fileIcon(f.filename)}</div>
-            <span class="file-name-text">${f.filename}</span>
-          </div>
-        </td>
-        <td><span class="file-date">${formatDate(f.uploaded_at)}</span></td>
-        <td><span class="file-mime">${f.mime_type || '—'}</span></td>
-        <td>
-          <div class="file-actions">
-            <button class="btn-file-action" onclick="downloadFile('${f.file_id}', '${f.filename}')">↓ Download</button>
-            <button class="btn-file-action danger" onclick="deleteFile('${f.file_id}')">Delete</button>
-          </div>
-        </td>
-      </tr>
+    list.innerHTML = files.map(f => `
+      <div class="file-row">
+        <div class="file-name-cell">
+          <div class="file-type-icon">${fileIcon(f.filename)}</div>
+          <span class="file-name-text" title="${f.filename}">${f.filename}</span>
+        </div>
+        <span class="file-date">${fmtDate(f.uploaded_at)}</span>
+        <span class="file-mime">${f.mime_type || '—'}</span>
+        <div class="file-actions">
+          <button class="btn-file" onclick="startDownload('${f.file_id}', '${f.filename}')">↓ Download</button>
+          <button class="btn-file danger" onclick="deleteFile('${f.file_id}', '${f.filename}')">Delete</button>
+        </div>
+      </div>
     `).join('');
 
-    // connect WebSocket for live updates
     connectWS(wsId);
   } catch (e) {
-    tbody.innerHTML = `<tr class="empty-row"><td colspan="4">${e.message}</td></tr>`;
+    list.innerHTML = `<div class="files-empty">${e.message}</div>`;
   }
 }
 
-async function downloadFile(fileId, filename) {
+async function deleteFile(fileId, filename) {
+  if (!confirm(`Delete "${filename}"?`)) return;
+  try {
+    await api('DELETE', `/files/${fileId}/delete`);
+    toast(`${filename} deleted`, 'success');
+    loadFiles();
+  } catch (e) { toast(e.message, 'error'); }
+}
+
+/* ── UPLOAD ──────────────────────────────────────── */
+async function uploadFile(file) {
+  const wsId = document.getElementById('workspace-select').value;
+  const folderId = document.getElementById('folder-select').value;
+  if (!wsId || !folderId) { toast('Select workspace and folder first', 'error'); return; }
+
+  const itemId = `up-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const queue = document.getElementById('upload-queue');
+
+  queue.insertAdjacentHTML('beforeend', `
+    <div class="upload-item" id="${itemId}">
+      <div class="upload-item-left">
+        <div class="upload-item-name">${file.name}</div>
+        <div class="upload-item-bar"><div class="upload-item-fill" id="fill-${itemId}" style="width:0%"></div></div>
+        <div class="upload-item-meta">
+          <span class="upload-item-status" id="stat-${itemId}">Preparing...</span>
+        </div>
+      </div>
+      <div class="upload-item-right">
+        <button class="upload-cancel" id="cancel-${itemId}" title="Cancel">✕</button>
+      </div>
+    </div>
+  `);
+
+  const fill = document.getElementById(`fill-${itemId}`);
+  const stat = document.getElementById(`stat-${itemId}`);
+  const cancelBtn = document.getElementById(`cancel-${itemId}`);
+
+  let cancelled = false;
+  let uploadId = null;
+
+  cancelBtn.onclick = async () => {
+    cancelled = true;
+    stat.textContent = 'Cancelled';
+    stat.className = 'upload-item-status error';
+    fill.style.background = 'var(--red)';
+    cancelBtn.remove();
+    setTimeout(() => document.getElementById(itemId)?.remove(), 2000);
+  };
+
+  const totalMB = (file.size / 1024 / 1024).toFixed(1);
+  const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
+
+  try {
+    stat.textContent = 'Initializing...';
+    const init = await api('POST', `/files/upload/init?filename=${encodeURIComponent(file.name)}&workspace_id=${wsId}&folder_id=${folderId}`);
+    uploadId = init.upload_id;
+
+    let uploaded = 0;
+    const startTime = Date.now();
+
+    for (let i = 0; i < totalChunks; i++) {
+      if (cancelled) return;
+
+      const start = i * CHUNK_SIZE;
+      const end = Math.min(start + CHUNK_SIZE, file.size);
+      const chunk = file.slice(start, end);
+
+      const fd = new FormData();
+      fd.append('chunk', chunk, file.name);
+
+      await fetch(`${API}/files/upload/${uploadId}/chunk/${i + 1}`, {
+        method: 'PUT',
+        headers: { 'Authorization': `Bearer ${token}` },
+        body: fd,
+      });
+
+      if (cancelled) return;
+
+      uploaded += (end - start);
+      const elapsed = (Date.now() - startTime) / 1000;
+      const speed = uploaded / elapsed;
+      const pct = Math.round((uploaded / file.size) * 100);
+      const loadedMB = (uploaded / 1024 / 1024).toFixed(1);
+
+      fill.style.width = `${pct}%`;
+      stat.textContent = `${loadedMB} / ${totalMB} MB  ·  ${fmtSpeed(speed)}  ·  ${pct}%`;
+    }
+
+    if (cancelled) return;
+
+    stat.textContent = 'Finalizing...';
+    fill.style.width = '99%';
+
+    await api('POST', `/files/upload/${uploadId}/complete`);
+
+    fill.style.width = '100%';
+    fill.style.background = 'var(--green)';
+    stat.textContent = `Done — ${totalMB} MB`;
+    stat.className = 'upload-item-status done';
+    cancelBtn.remove();
+    toast(`${file.name} uploaded!`, 'success');
+    loadFiles();
+    setTimeout(() => document.getElementById(itemId)?.remove(), 4000);
+
+  } catch (e) {
+    if (cancelled) return;
+    stat.textContent = `Failed: ${e.message}`;
+    stat.className = 'upload-item-status error';
+    fill.style.background = 'var(--red)';
+    toast(`Upload failed: ${e.message}`, 'error');
+  }
+}
+
+/* ── DOWNLOADS ───────────────────────────────────── */
+function startDownload(fileId, filename) {
+  const dlId = `dl-${Date.now()}`;
+
+  downloads[dlId] = {
+    fileId, filename,
+    status: 'active',
+    loaded: 0,
+    total: 0,
+    speed: 0,
+    startTime: Date.now(),
+    abortController: new AbortController(),
+  };
+
+  updateDownloadsBadge();
+  renderDownloads();
+
+  // switch to downloads tab
+  showView('downloads');
+
+  // start the actual download
+  fetchAndDownload(dlId, fileId, filename);
+}
+
+async function fetchAndDownload(dlId, fileId, filename) {
+  const dl = downloads[dlId];
+  const statusEl = () => document.getElementById(`dl-status-${dlId}`);
+  const barEl = () => document.getElementById(`dl-bar-${dlId}`);
+  const progEl = () => document.getElementById(`dl-prog-${dlId}`);
+
   try {
     const res = await fetch(`${API}/files/${fileId}/download`, {
-      headers: { 'Authorization': `Bearer ${token}` }
+      headers: { 'Authorization': `Bearer ${token}` },
+      signal: dl.abortController.signal,
     });
+
     if (!res.ok) throw new Error('Download failed');
-    const blob = await res.blob();
+
+    const contentLength = res.headers.get('content-length');
+    dl.total = contentLength ? parseInt(contentLength) : 0;
+
+    const reader = res.body.getReader();
+    const chunks = [];
+    let loaded = 0;
+    let lastTime = Date.now();
+    let lastLoaded = 0;
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      if (downloads[dlId]?.status === 'cancelled') {
+        reader.cancel();
+        return;
+      }
+
+      chunks.push(value);
+      loaded += value.length;
+      dl.loaded = loaded;
+
+      // speed calc every 500ms
+      const now = Date.now();
+      if (now - lastTime > 500) {
+        dl.speed = (loaded - lastLoaded) / ((now - lastTime) / 1000);
+        lastTime = now;
+        lastLoaded = loaded;
+      }
+
+      // update UI
+      const pct = dl.total ? Math.round((loaded / dl.total) * 100) : 0;
+      const loadedStr = fmtSize(loaded);
+      const totalStr = dl.total ? fmtSize(dl.total) : '?';
+      const speedStr = fmtSpeed(dl.speed);
+
+      if (barEl()) barEl().style.width = `${pct}%`;
+      if (progEl()) progEl().textContent = `${loadedStr} / ${totalStr}`;
+      if (statusEl()) statusEl().textContent = `${speedStr}  ·  ${pct}%`;
+    }
+
+    // assemble blob and trigger save
+    const blob = new Blob(chunks);
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url; a.download = filename;
     a.click();
     URL.revokeObjectURL(url);
-    toast(`Downloaded ${filename}`, 'success');
+
+    dl.status = 'done';
+    dl.loaded = dl.total || loaded;
+    if (barEl()) { barEl().style.width = '100%'; barEl().className = 'download-bar done'; }
+    if (statusEl()) { statusEl().textContent = `Complete — ${fmtSize(dl.loaded)}`; statusEl().className = 'download-status done'; }
+    if (progEl()) progEl().textContent = fmtSize(dl.loaded);
+    toast(`${filename} downloaded!`, 'success');
+    renderDownloads();
+
   } catch (e) {
-    toast(e.message, 'error');
+    if (e.name === 'AbortError' || downloads[dlId]?.status === 'cancelled') return;
+    dl.status = 'error';
+    if (barEl()) barEl().className = 'download-bar error';
+    if (statusEl()) { statusEl().textContent = `Failed: ${e.message}`; statusEl().className = 'download-status error'; }
+    toast(`Download failed: ${e.message}`, 'error');
+    renderDownloads();
   }
+
+  updateDownloadsBadge();
 }
 
-async function deleteFile(fileId) {
-  if (!confirm('Delete this file?')) return;
-  try {
-    await api('DELETE', `/files/${fileId}/delete`);
-    toast('File deleted', 'success');
-    await loadFiles();
-  } catch (e) {
-    toast(e.message, 'error');
-  }
+function cancelDownload(dlId) {
+  const dl = downloads[dlId];
+  if (!dl) return;
+  dl.status = 'cancelled';
+  dl.abortController.abort();
+  delete downloads[dlId];
+  renderDownloads();
+  updateDownloadsBadge();
+  toast('Download cancelled', 'info');
 }
 
-/* ─── CHUNKED UPLOAD ────────────────────────────────── */
-async function uploadFile(file) {
-  const wsId = document.getElementById('workspace-select').value;
-  const folderId = document.getElementById('folder-select').value;
+function clearCompletedDownloads() {
+  Object.keys(downloads).forEach(id => {
+    if (downloads[id].status === 'done' || downloads[id].status === 'error') {
+      delete downloads[id];
+    }
+  });
+  renderDownloads();
+  updateDownloadsBadge();
+}
 
-  if (!wsId || !folderId) {
-    toast('Select a workspace and folder first', 'error');
+function updateDownloadsBadge() {
+  const active = Object.values(downloads).filter(d => d.status === 'active').length;
+  const badge = document.getElementById('downloads-badge');
+  if (active > 0) { badge.style.display = 'inline'; badge.textContent = active; }
+  else { badge.style.display = 'none'; }
+}
+
+function renderDownloads() {
+  const list = document.getElementById('downloads-list');
+  const entries = Object.entries(downloads);
+
+  if (!entries.length) {
+    list.innerHTML = '<div class="files-empty">No downloads yet</div>';
     return;
   }
 
-  // create progress item
-  const progressList = document.getElementById('upload-progress-list');
-  const itemId = `upload-${Date.now()}`;
-  progressList.innerHTML += `
-    <div class="upload-progress-item" id="${itemId}">
-      <div class="upload-progress-name">${file.name}</div>
-      <div class="upload-progress-bar-wrap">
-        <div class="upload-progress-bar" id="bar-${itemId}" style="width:0%"></div>
+  list.innerHTML = entries.map(([dlId, dl]) => {
+    const pct = dl.total ? Math.round((dl.loaded / dl.total) * 100) : 0;
+    const isActive = dl.status === 'active';
+    return `
+      <div class="download-item" id="dl-item-${dlId}">
+        <div class="download-header">
+          <div class="download-file-icon">${fileIcon(dl.filename)}</div>
+          <div class="download-info">
+            <div class="download-name">${dl.filename}</div>
+            <div class="download-size">${dl.total ? fmtSize(dl.total) : 'Calculating...'}</div>
+          </div>
+          <div class="download-controls">
+            ${isActive ? `<button class="btn-download-control cancel" onclick="cancelDownload('${dlId}')">Cancel</button>` : ''}
+          </div>
+        </div>
+        <div class="download-bar-wrap">
+          <div class="download-bar ${dl.status === 'done' ? 'done' : dl.status === 'error' ? 'error' : ''}"
+               id="dl-bar-${dlId}" style="width:${pct}%"></div>
+        </div>
+        <div class="download-meta">
+          <span class="download-progress-text" id="dl-prog-${dlId}">
+            ${fmtSize(dl.loaded)} ${dl.total ? '/ ' + fmtSize(dl.total) : ''}
+          </span>
+          <span class="download-status ${dl.status === 'done' ? 'done' : dl.status === 'error' ? 'error' : 'active'}"
+                id="dl-status-${dlId}">
+            ${dl.status === 'done' ? `Complete — ${fmtSize(dl.loaded)}` :
+              dl.status === 'error' ? 'Failed' :
+              fmtSpeed(dl.speed) + '  ·  ' + pct + '%'}
+          </span>
+        </div>
       </div>
-      <div class="upload-progress-status" id="status-${itemId}">Starting...</div>
-    </div>
-  `;
-
-  const bar = document.getElementById(`bar-${itemId}`);
-  const status = document.getElementById(`status-${itemId}`);
-
-  function setProgress(pct, label) {
-    bar.style.width = `${pct}%`;
-    status.textContent = label;
-  }
-
-  try {
-    // STEP 1: init
-    setProgress(5, 'Initializing...');
-    const initData = await api('POST',
-      `/files/upload/init?filename=${encodeURIComponent(file.name)}&workspace_id=${wsId}&folder_id=${folderId}`
-    );
-    const uploadId = initData.upload_id;
-
-    // STEP 2: split into chunks and upload
-    const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
-    for (let i = 0; i < totalChunks; i++) {
-      const start = i * CHUNK_SIZE;
-      const end = Math.min(start + CHUNK_SIZE, file.size);
-      const chunk = file.slice(start, end);
-
-      const formData = new FormData();
-      formData.append('chunk', chunk, file.name);
-
-      await fetch(`${API}/files/upload/${uploadId}/chunk/${i + 1}`, {
-        method: 'PUT',
-        headers: { 'Authorization': `Bearer ${token}` },
-        body: formData,
-      });
-
-      const pct = Math.round(((i + 1) / totalChunks) * 80) + 10;
-      setProgress(pct, `Chunk ${i + 1}/${totalChunks}`);
-    }
-
-    // STEP 3: complete
-    setProgress(95, 'Finalizing...');
-    await api('POST', `/files/upload/${uploadId}/complete`);
-
-    setProgress(100, 'Done ✓');
-    status.className = 'upload-progress-status done';
-    toast(`${file.name} uploaded!`, 'success');
-
-    // refresh files list
-    await loadFiles();
-
-    // remove progress item after delay
-    setTimeout(() => {
-      document.getElementById(itemId)?.remove();
-    }, 3000);
-
-  } catch (e) {
-    status.textContent = 'Failed';
-    status.className = 'upload-progress-status error';
-    toast(`Upload failed: ${e.message}`, 'error');
-  }
+    `;
+  }).join('');
 }
 
-/* ─── SEARCH ────────────────────────────────────────── */
+/* ── SEARCH ──────────────────────────────────────── */
 async function search() {
   const query = document.getElementById('search-input').value.trim();
-  const wsId = document.getElementById('search-workspace-select').value;
-  const resultsEl = document.getElementById('search-results');
+  const wsId = document.getElementById('search-ws-select').value;
+  const results = document.getElementById('search-results');
 
   if (!query) { toast('Enter a search query', 'error'); return; }
 
-  resultsEl.innerHTML = `
+  results.innerHTML = `
     <div class="search-empty">
-      <div class="spinner" style="width:28px;height:28px;border-width:3px;margin-bottom:12px;"></div>
-      <p style="color:var(--text2)">Searching with AI...</p>
+      <div class="spinner" style="width:28px;height:28px;border-width:3px;"></div>
     </div>
   `;
 
   try {
     const params = new URLSearchParams({ query });
     if (wsId) params.append('workspace_id', wsId);
-
     const data = await api('GET', `/search?${params}`);
-    const results = data.results || [];
+    const items = data.results || [];
 
-    if (results.length === 0) {
-      resultsEl.innerHTML = `
+    if (!items.length) {
+      results.innerHTML = `
         <div class="search-empty">
-          <div class="search-empty-icon">◎</div>
+          <div class="search-empty-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg></div>
           <p>No results found</p>
           <span>Try different keywords or upload more files</span>
         </div>
@@ -464,162 +630,121 @@ async function search() {
       return;
     }
 
-    resultsEl.innerHTML = results.map((r, i) => `
-      <div class="search-result-item" style="animation-delay:${i * 0.05}s">
-        <div class="search-result-icon">${fileIcon(r.filename)}</div>
-        <div class="search-result-info">
-          <div class="search-result-name">${r.filename}</div>
-          <div class="search-result-meta">ID: ${r.file_id}</div>
+    results.innerHTML = items.map((r, i) => {
+      const sim = Math.round(r.similarity * 100);
+      const cls = sim >= 60 ? 'similarity-high' : sim >= 30 ? 'similarity-mid' : 'similarity-low';
+      return `
+        <div class="search-result" style="animation-delay:${i*0.04}s">
+          <div class="search-result-icon">${fileIcon(r.filename)}</div>
+          <div class="search-result-info">
+            <div class="search-result-name">${r.filename}</div>
+            <div class="search-result-id">ID: ${r.file_id}</div>
+          </div>
+          <span class="similarity-pill ${cls}">${sim}% match</span>
         </div>
-        <div class="similarity-badge">${Math.round(r.similarity * 100)}% match</div>
-      </div>
-    `).join('');
+      `;
+    }).join('');
 
   } catch (e) {
-    resultsEl.innerHTML = `
-      <div class="search-empty">
-        <p style="color:var(--danger)">${e.message}</p>
-      </div>
-    `;
+    results.innerHTML = `<div class="search-empty"><p style="color:var(--red)">${e.message}</p></div>`;
   }
 }
 
-/* ─── WEBSOCKET ─────────────────────────────────────── */
-function connectWS(workspaceId) {
-  if (ws) ws.close();
+/* ── WEBSOCKET ────────────────────────────────────── */
+function connectWS(wsId) {
+  if (wsConn) wsConn.close();
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-  ws = new WebSocket(`${proto}://${location.host}/ws/workspace/${workspaceId}`);
-
-  ws.onopen = () => console.log('WS connected');
-
-  ws.onmessage = (e) => {
+  wsConn = new WebSocket(`${proto}://${location.host}/ws/workspace/${wsId}`);
+  wsConn.onmessage = (e) => {
     const data = JSON.parse(e.data);
-    if (data.event === 'file_uploaded') {
-      toast(`📁 ${data.filename} uploaded by ${data.uploaded_by}`, 'info');
-      loadFiles();
-    } else if (data.event === 'file_deleted') {
-      toast(`🗑 File deleted`, 'info');
-      loadFiles();
-    }
+    if (data.event === 'file_uploaded') { toast(`📁 ${data.filename} uploaded by ${data.uploaded_by}`, 'info'); loadFiles(); }
+    else if (data.event === 'file_deleted') { toast('🗑 File deleted by teammate', 'info'); loadFiles(); }
   };
-
-  ws.onerror = () => console.warn('WS error');
-  ws.onclose = () => console.log('WS closed');
+  wsConn.onerror = () => {};
+  wsConn.onclose = () => {};
 }
 
-/* ─── EVENT LISTENERS ───────────────────────────────── */
+/* ── EVENTS ──────────────────────────────────────── */
 document.addEventListener('DOMContentLoaded', () => {
 
   // auth tabs
   document.querySelectorAll('.auth-tab').forEach(tab => {
-    tab.addEventListener('click', () => {
+    tab.onclick = () => {
       document.querySelectorAll('.auth-tab').forEach(t => t.classList.remove('active'));
       document.querySelectorAll('.auth-panel').forEach(p => p.classList.remove('active'));
       tab.classList.add('active');
       document.getElementById(`panel-${tab.dataset.tab}`).classList.add('active');
-    });
+    };
   });
 
-  // auth buttons
-  document.getElementById('btn-login').addEventListener('click', login);
-  document.getElementById('btn-register').addEventListener('click', register);
-  document.getElementById('btn-logout').addEventListener('click', logout);
+  // auth actions
+  document.getElementById('btn-login').onclick = login;
+  document.getElementById('btn-register').onclick = register;
+  document.getElementById('btn-logout').onclick = logout;
 
-  // enter key on auth inputs
   ['login-email', 'login-password'].forEach(id => {
-    document.getElementById(id).addEventListener('keydown', e => {
-      if (e.key === 'Enter') login();
-    });
+    document.getElementById(id).addEventListener('keydown', e => { if (e.key === 'Enter') login(); });
   });
   ['reg-username', 'reg-email', 'reg-password'].forEach(id => {
-    document.getElementById(id).addEventListener('keydown', e => {
-      if (e.key === 'Enter') register();
-    });
+    document.getElementById(id).addEventListener('keydown', e => { if (e.key === 'Enter') register(); });
   });
 
   // nav
   document.querySelectorAll('.nav-item').forEach(item => {
-    item.addEventListener('click', () => showView(item.dataset.view));
+    item.onclick = () => showView(item.dataset.view);
   });
 
   // workspace select
-  document.getElementById('workspace-select').addEventListener('change', async (e) => {
+  document.getElementById('workspace-select').onchange = async (e) => {
     const wsId = e.target.value;
-    currentWorkspaceId = wsId;
-    if (wsId) {
-      await loadFolders(wsId);
-    } else {
-      document.getElementById('folder-select').innerHTML = '<option value="">— select folder —</option>';
-    }
-    await loadFiles();
-  });
+    if (wsId) await loadFolders(wsId);
+    else document.getElementById('folder-select').innerHTML = '<option value="">Select folder</option>';
+    loadFiles();
+  };
 
-  document.getElementById('folder-select').addEventListener('change', loadFiles);
-  document.getElementById('btn-refresh-files').addEventListener('click', loadFiles);
+  document.getElementById('folder-select').onchange = loadFiles;
+  document.getElementById('btn-refresh-files').onclick = loadFiles;
 
   // upload zone
-  const uploadZone = document.getElementById('upload-zone');
+  const zone = document.getElementById('upload-zone');
   const fileInput = document.getElementById('file-input');
 
-  uploadZone.addEventListener('click', () => fileInput.click());
-  uploadZone.addEventListener('dragover', (e) => {
-    e.preventDefault();
-    uploadZone.classList.add('drag-over');
-  });
-  uploadZone.addEventListener('dragleave', () => uploadZone.classList.remove('drag-over'));
-  uploadZone.addEventListener('drop', (e) => {
-    e.preventDefault();
-    uploadZone.classList.remove('drag-over');
+  zone.onclick = (e) => { if (!e.target.classList.contains('drop-link')) fileInput.click(); };
+  zone.ondragover = (e) => { e.preventDefault(); zone.classList.add('over'); };
+  zone.ondragleave = () => zone.classList.remove('over');
+  zone.ondrop = (e) => {
+    e.preventDefault(); zone.classList.remove('over');
     Array.from(e.dataTransfer.files).forEach(uploadFile);
-  });
+  };
+  fileInput.onchange = () => { Array.from(fileInput.files).forEach(uploadFile); fileInput.value = ''; };
+  document.getElementById('btn-upload-trigger').onclick = () => fileInput.click();
 
-  fileInput.addEventListener('change', () => {
-    Array.from(fileInput.files).forEach(uploadFile);
-    fileInput.value = '';
-  });
+  // workspace modal
+  document.getElementById('btn-new-workspace').onclick = () => openModal('workspace');
+  document.getElementById('btn-create-ws').onclick = createWorkspace;
+  document.getElementById('ws-name').addEventListener('keydown', e => { if (e.key === 'Enter') createWorkspace(); });
 
-  document.getElementById('btn-upload-trigger').addEventListener('click', () => fileInput.click());
+  // folder modal
+  document.getElementById('btn-new-folder').onclick = () => openModal('folder');
+  document.getElementById('btn-create-folder').onclick = createFolder;
+  document.getElementById('folder-name').addEventListener('keydown', e => { if (e.key === 'Enter') createFolder(); });
 
-  // workspace buttons
-  document.getElementById('btn-new-workspace').addEventListener('click', () => showModal('workspace'));
-  document.getElementById('btn-create-workspace').addEventListener('click', createWorkspace);
-
-  // folder buttons
-  document.getElementById('btn-new-folder').addEventListener('click', () => showModal('folder'));
-  document.getElementById('btn-create-folder').addEventListener('click', createFolder);
+  // modal close
+  document.getElementById('modal-backdrop').onclick = (e) => { if (e.target === document.getElementById('modal-backdrop')) closeModals(); };
+  document.querySelectorAll('[data-close]').forEach(btn => btn.onclick = closeModals);
 
   // member panel
-  document.getElementById('btn-add-member').addEventListener('click', addMember);
-  document.getElementById('btn-close-member-panel').addEventListener('click', () => {
-    document.getElementById('member-panel').style.display = 'none';
-  });
+  document.getElementById('btn-add-member').onclick = addMember;
+  document.getElementById('btn-close-member').onclick = () => { document.getElementById('member-panel').style.display = 'none'; };
 
   // search
-  document.getElementById('btn-search').addEventListener('click', search);
-  document.getElementById('search-input').addEventListener('keydown', e => {
-    if (e.key === 'Enter') search();
-  });
+  document.getElementById('btn-search').onclick = search;
+  document.getElementById('search-input').addEventListener('keydown', e => { if (e.key === 'Enter') search(); });
 
-  // close modals
-  document.getElementById('modal-overlay').addEventListener('click', (e) => {
-    if (e.target === document.getElementById('modal-overlay')) closeModals();
-  });
-  document.querySelectorAll('[data-close-modal]').forEach(btn => {
-    btn.addEventListener('click', closeModals);
-  });
+  // downloads
+  document.getElementById('btn-clear-downloads').onclick = clearCompletedDownloads;
 
-  // enter on modals
-  document.getElementById('ws-name-input').addEventListener('keydown', e => {
-    if (e.key === 'Enter') createWorkspace();
-  });
-  document.getElementById('folder-name-input').addEventListener('keydown', e => {
-    if (e.key === 'Enter') createFolder();
-  });
-
-  // check if already logged in
-  if (token) {
-    initApp();
-  } else {
-    showScreen('auth-screen');
-  }
+  // boot
+  if (token) initApp();
+  else showScreen('auth-screen');
 });

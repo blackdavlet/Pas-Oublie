@@ -125,6 +125,7 @@ async def upload_chunk(
 @app.post("/files/upload/{upload_id}/complete")
 async def upload_complete(upload_id: str):
     meta = await _r.hgetall(f"upload:{upload_id}")
+    total_size = 0
     if not meta:
         raise HTTPException(404, "session not found or expired")
 
@@ -140,7 +141,8 @@ async def upload_complete(upload_id: str):
         folder_id=int(meta["folder_id"]),
         workspace_id=int(meta["workspace_id"]),
         mime_type="application/octet-stream",
-        storage_path=storage_path
+        storage_path=storage_path,
+        size_bytes=total_size
     )
 
     await _r.publish("index:queue", json.dumps({
@@ -305,8 +307,14 @@ async def get_workspace_files(
     current_user=Depends(get_current_user)
 ):
     files = await db.get_files_by_folder(folder_id)
-    return {"files": [dict(f) for f in files]}
-
+    return {"files": [
+        {
+            **dict(f),
+            "file_id": str(f["file_id"]),  # ← convert to string
+            "uploaded_at": f["uploaded_at"].isoformat()
+        }
+        for f in files
+    ]}
 
 @app.post("/folders")
 async def create_folder(
@@ -322,3 +330,8 @@ async def create_folder(
         "folder_id": folder["folder_id"],
         "folder_name": folder["folder_name"]
     }
+
+@app.get("/workspaces/{workspace_id}/folders")
+async def get_folders(workspace_id: int, current_user=Depends(get_current_user)):
+    folders = await db.get_folders_by_workspace(workspace_id)
+    return {"folders": [dict(f) for f in folders]}
