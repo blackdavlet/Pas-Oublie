@@ -51,7 +51,7 @@ def extract_text(file_bytes: bytes, filename: str) -> str:
         from io import BytesIO
         doc = docx.Document(BytesIO(file_bytes))
         return "\n".join([p.text for p in doc.paragraphs])
-    return filename
+    return None
 
 
 def generate_embedding(text: str) -> list[float]:
