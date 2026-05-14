@@ -187,7 +187,8 @@ services:
     networks:
       - appnet
     depends_on:
-      - backend # Ensure the backend service starts before Prometheus
+      - backend1
+      - backend2   # Ensure the backend service starts before Prometheus
 
   grafana:
     image: grafana/grafana-oss:latest
