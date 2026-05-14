@@ -67,8 +67,8 @@ def serve():
     server = grpc.server(
         futures.ThreadPoolExecutor(max_workers=4),
         options=[
-            ('grpc.max_receive_message_lenght', 100 * 1024 * 1024),
-            ('grpc.max_sent_message_lenght', 00 * 1024 * 1024),
+            ('grpc.max_receive_message_length', 100 * 1024 * 1024),
+            ('grpc.max_sent_message_length', 100 * 1024 * 1024),
         ]
     )
     storage_pb2_grpc.add_StorageServiceServicer_to_server(
