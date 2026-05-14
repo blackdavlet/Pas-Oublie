@@ -20,22 +20,52 @@ services:
     networks:
       - appnet
 
-  backend:
+  backend1:
     build: ./backend
     ports:
       - "8000:8000"
-    container_name: pa_backend
+    container_name: pa_backend1
     restart: always
     environment:
       DATABASE_URL: postgresql://${DB_USER}:${DB_PASSWORD}@postgres:5432/${DB_NAME}
       REDIS_URL: redis://redis:6379/0
       STORAGE_SERVICE_URL: storage_service:50051
       SEARCH_SERVICE_URL: search_service:50052
-      SEAWEED_MASTERR: seaweedfs:9333
+      SEAWEED_MASTER: seaweedfs:9333
       SEAWEED_FILER: seaweedfs:8080
       JWT_SECRET: ${JWT_SECRET}
       OPENAI_API_KEY: ${OPENAI_API_KEY}
       MACHINE_ID: 1
+    depends_on:
+      - postgres
+      - redis
+      - seaweedfs
+      - storage_service
+      - search_service
+    networks:
+      - appnet
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/docs"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  backend2:
+    build: ./backend
+    ports:
+      - "8000:8000"
+    container_name: pa_backend1
+    restart: always
+    environment:
+      DATABASE_URL: postgresql://${DB_USER}:${DB_PASSWORD}@postgres:5432/${DB_NAME}
+      REDIS_URL: redis://redis:6379/0
+      STORAGE_SERVICE_URL: storage_service:50051
+      SEARCH_SERVICE_URL: search_service:50052
+      SEAWEED_MASTER: seaweedfs:9333
+      SEAWEED_FILER: seaweedfs:8080
+      JWT_SECRET: ${JWT_SECRET}
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      MACHINE_ID: 2
     depends_on:
       - postgres
       - redis
@@ -158,6 +188,23 @@ services:
       - appnet
     depends_on:
       - backend # Ensure the backend service starts before Prometheus
+
+  grafana:
+    image: grafana/grafana-oss:latest
+    container_name: pa_grafana
+    restart: always
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD= ${GF_SECURITY_ADMIN_PASSWORD}
+    volumes:
+      - grafana_data:/var/lib/grafana
+    networks:
+      - appnet
+    depends_on:
+      - prometheus
+
+
 networks:
   appnet:
     driver: bridge
@@ -165,6 +212,4 @@ networks:
 volumes:
   pgdata:
   seaweedfs_data:
-
-
-  # test for push
+  grafana_data:
