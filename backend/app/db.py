@@ -61,7 +61,7 @@ async def create_file(user_id: int, filename: str, folder_id: int, workspace_id:
     async with pool.acquire() as con:
         return await con.fetchrow(
             """
-            INSERT INTO file (file_id, user_id, filename, folder_id, workspace_id, mime_type, storage_path, size_bytes)      
+            INSERT INTO file (file_id, user_id, filename, folder_id, workspace_id, mime_type, size_bytes, storage_path)      
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
             RETURNING file_id, filename, uploaded_at
             """,
@@ -173,11 +173,3 @@ async def delete_file(file_id: str):
 
 def verify_password(plain: str, hashed: str) -> bool:
     return bcrypt.verify(plain, hashed)
-    
-
-
-
-
-
-
-#   NO FOLDERS YET AND SOME OF GET FUNCTIONS
