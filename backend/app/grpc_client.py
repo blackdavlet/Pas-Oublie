@@ -13,8 +13,8 @@ def _get_storage_stub():
         _storage_channel = grpc.insecure_channel(
             os.environ["STORAGE_SERVICE_URL"],
             options=[
-                ('grpc.max_receive_message_lenght', 100 * 1024 * 1024),
-                ('grpc.max_send_message_lenght', 100 * 1024 * 1024),
+                ('grpc.max_receive_message_length', 100 * 1024 * 1024),
+                ('grpc.max_send_message_length', 100 * 1024 * 1024),
             ]
         )
         _storage_stub = storage_pb2_grpc.StorageServiceStub(_storage_channel)
