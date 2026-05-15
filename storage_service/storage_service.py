@@ -48,21 +48,6 @@ class StorageServicer(storage_pb2_grpc.StorageServiceServicer):
         except Exception as e:
             context.abort(grpc.StatusCode.INTERNAL, str(e))
 
-    def DeleteFile(self, request, context):
-        try:
-            meta = json.loads(request.storage_path)
-            for fid in meta["fids"]:
-                vol_id = fid.split(",")[0]
-                res = requests.get(
-                    f"http://{SEAWEED_MASTER}/dir/lookup?volumeId={vol_id}"
-                )
-                location = res.json()["locations"][0]["publicUrl"]
-                requests.delete(f"http://{location}/{fid}")
-            return storage_pb2.DeleteResponse(success=True)
-        except Exception as e:
-            context.abort(grpc.StatusCode.INTERNAL, str(e))
-
-
 def serve():
     server = grpc.server(
         futures.ThreadPoolExecutor(max_workers=4),
