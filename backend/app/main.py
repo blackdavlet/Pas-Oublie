@@ -3,6 +3,7 @@ import uuid
 import json
 import requests as req_lib
 from pathlib import Path
+from prometheus_fastapi_instrumentator import Instrumentator
 
 from fastapi import FastAPI, UploadFile, File, HTTPException, Depends, Request
 from fastapi.responses import JSONResponse, Response, RedirectResponse, StreamingResponse
@@ -24,6 +25,7 @@ app = FastAPI(
     version="1.0.0"
 )
 
+Instrumentator().instrument(app).expose(app)
 app.include_router(ws.router)
 
 _r = aioredis.from_url(os.environ["REDIS_URL"], decode_responses=True)

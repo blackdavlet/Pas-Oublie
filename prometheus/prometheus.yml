@@ -4,4 +4,4 @@ global:
 scrape_configs:
   - job_name: 'backend'
     static_configs:
-      - targets: ['pa_backend1:8000', 'pa_backend2:8000'] # Target the backend service container on port 8000
+      - targets: ['pa_backend1:8000', 'pa_backend2:8000'] 
