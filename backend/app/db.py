@@ -161,7 +161,14 @@ async def get_files_by_folder(folder_id: int):
             folder_id
         )
     
-
+async def get_folders_by_workspace(workspace_id: int):
+    pool = await get_pool()
+    async with pool.acquire() as con:
+        return await con.fetch(
+            "SELECT folder_id, folder_name, created_at FROM folder WHERE workspace_id = $1 ORDER BY created_at",
+            workspace_id
+        )
+        
 async def delete_file(file_id: str):
     pool = await get_pool()
     async with pool.acquire() as con:
@@ -173,3 +180,5 @@ async def delete_file(file_id: str):
 
 def verify_password(plain: str, hashed: str) -> bool:
     return bcrypt.verify(plain, hashed)
+
+
