@@ -1,7 +1,3 @@
-# Pas-Oublie
-DAD project
-
-
 # Pas Oublié
 > Not forgotten. Save and search your data at Pas Oublié and never forget them.
 
